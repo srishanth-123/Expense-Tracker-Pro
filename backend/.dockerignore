@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.env
+logs
+coverage
+__tests__
+*.test.js
+.git
+.gitignore
+README.md
+Dockerfile
+docker-compose.yml
+debug_trie.js
+test_razorpay.js
+generate_isolated_collection.js
+update_postman.js
