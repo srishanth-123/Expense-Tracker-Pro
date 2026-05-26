@@ -101,7 +101,23 @@ class SagaService {
                 }
             }
         ];
-        return await this.runSaga(steps);
+        const result = await this.runSaga(steps);
+        if (result) {
+            try {
+                const Notification = require("../models/notificationModel");
+                const { sendNotificationToUser } = require("../utils/socket");
+                const payer = await User.findById(payerId);
+                const notification = await Notification.create({
+                    user: receiverId,
+                    type: "SPLIT_SETTLED",
+                    message: `${payer.name || 'A friend'} has settled their split of ₹${shareAmount}.`
+                });
+                sendNotificationToUser(receiverId, notification);
+            } catch (err) {
+                console.error("Failed to send split settled notification", err);
+            }
+        }
+        return result;
     }
 
     async runWalletTopupSaga(userId, amount, orderId, paymentId) {

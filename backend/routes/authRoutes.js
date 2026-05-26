@@ -6,6 +6,8 @@ const { validateRegistration, validateLogin } = require("../middleware/validatio
 const {
     registerUser,
     loginUser,
+    forgotPassword,
+    resetPassword,
     logoutUser,
     getMe,
     searchUsers
@@ -15,6 +17,8 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 router.post("/register", authLimiter, validateRegistration, registerUser);
 router.post("/login", authLimiter, validateLogin, loginUser);
+router.post("/forgot-password", authLimiter, forgotPassword);
+router.post("/reset-password/:token", authLimiter, resetPassword);
 router.post("/logout", logoutUser);
 router.get("/me", authMiddleware, getMe);
 router.get("/users", authMiddleware, searchUsers);

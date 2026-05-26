@@ -1,9 +1,10 @@
 const Split = require("../models/split");
 const User = require("../models/user");
-const WalletTransaction = require("../models/WalletTransaction");
 const redis = require("../config/redis");
 const idempotencyHandler = require("../utils/idempotency");
 const sagaService = require("../services/saga.service");
+const Notification = require("../models/notificationModel");
+const { sendNotificationToUser } = require("../utils/socket");
 
 async function wipeTransactionDependentCaches(userId) {
     if (redis) {
@@ -54,6 +55,18 @@ exports.createSplit = async (req, res) => {
 
         // Wiping caches for all participants
         processedParticipants.forEach(p => wipeTransactionDependentCaches(p.user));
+
+        // Send notifications to all participants (except the creator)
+        for (const p of processedParticipants) {
+            if (p.user.toString() !== req.user._id.toString()) {
+                const notification = await Notification.create({
+                    user: p.user,
+                    type: "SPLIT_CREATED",
+                    message: `${req.user.name || 'Someone'} added you to a split: "${description}". You owe ₹${p.share.toFixed(2)}.`
+                });
+                sendNotificationToUser(p.user, notification);
+            }
+        }
 
         res.status(201).json(split);
     } catch (error) {

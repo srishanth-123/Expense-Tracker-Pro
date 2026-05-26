@@ -1,7 +1,10 @@
-const Transaction=require("../models/Transaction");
+const Transaction = require("../models/Transaction");
 const searchRegistry = require("../utils/trie");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
+const Budget = require("../models/budget");
+const Notification = require("../models/notificationModel");
+const { sendNotificationToUser } = require("../utils/socket");
 
 async function wipeTransactionDependentCaches(userId) {
     if (redis) {
@@ -59,6 +62,70 @@ exports.addTransaction=async(req,res)=>{
         }
 
         await wipeTransactionDependentCaches(req.user._id);
+
+        // --- Budget Check & Notification Logic ---
+        if (type === "expense") {
+            const txDate = date ? new Date(date) : new Date();
+            const currentMonth = txDate.getMonth() + 1;
+            const currentYear = txDate.getFullYear();
+
+            // Check if there is an active budget for this category and month
+            const budget = await Budget.findOne({
+                user: req.user._id,
+                category: category,
+                month: currentMonth,
+                year: currentYear,
+                isDeleted: false
+            });
+
+            if (budget) {
+                // Calculate total spent for this category this month
+                const spent = await Transaction.aggregate([
+                    {
+                        $match: {
+                            user: req.user._id,
+                            category: budget.category,
+                            type: "expense",
+                            date: {
+                                $gte: new Date(currentYear, currentMonth - 1, 1),
+                                $lte: new Date(currentYear, currentMonth, 0)
+                            },
+                            isDeleted: false
+                        }
+                    },
+                    {
+                        $group: {
+                            _id: null,
+                            total: { $sum: "$amount" }
+                        }
+                    }
+                ]);
+
+                const totalSpent = spent[0]?.total || 0;
+                
+                // If it just exceeded or is nearing the limit, we can notify
+                // For simplicity: notify if totalSpent > budget.limit 
+                // We'll notify if this exact transaction pushed it over the limit, to avoid spam
+                const previousSpent = totalSpent - parseFloat(amount);
+                
+                if (totalSpent > budget.limit && previousSpent <= budget.limit) {
+                    const notification = await Notification.create({
+                        user: req.user._id,
+                        type: "BUDGET_WARNING",
+                        message: `You've exceeded your ${budget.limit} INR budget for this category!`
+                    });
+                    sendNotificationToUser(req.user._id, notification);
+                } else if (totalSpent >= budget.limit * 0.9 && previousSpent < budget.limit * 0.9) {
+                    const notification = await Notification.create({
+                        user: req.user._id,
+                        type: "BUDGET_WARNING",
+                        message: `You've reached 90% of your budget for this category!`
+                    });
+                    sendNotificationToUser(req.user._id, notification);
+                }
+            }
+        }
+        // -----------------------------------------
 
         res.status(201).json({success: true, message: "Transaction created", data: populatedTransaction});
     } catch (error) {

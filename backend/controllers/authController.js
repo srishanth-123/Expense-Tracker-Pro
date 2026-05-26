@@ -1,12 +1,15 @@
 const User = require("../models/user");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const generateToken = require("../utils/generateToken");
 const logger = require("../utils/logger");
 const redis = require("../config/redis");
+const { sendWelcomeEmail, sendPasswordResetEmail } = require("../services/emailService");
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_DURATION_SECONDS = 15 * 60; // 15 minutes
+const PASSWORD_RESET_EXPIRY_MINUTES = 15;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const sendTokenCookie = (res, token) => {
@@ -35,6 +38,8 @@ exports.registerUser = async (req, res) => {
 
         const user = await User.create({ name, email, password: hashed });
         const token = generateToken(user.id);
+
+        sendWelcomeEmail(user);
 
         sendTokenCookie(res, token);
 
@@ -117,6 +122,66 @@ exports.loginUser = async (req, res) => {
     }
 };
 
+// ─── Forgot Password ──────────────────────────────────────────────────────────
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const genericResponse = {
+            success: true,
+            message: "If an account exists for this email, a reset link has been sent."
+        };
+
+        const user = await User.findOne({ email });
+        if (!user) return res.json(genericResponse);
+
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+        user.passwordResetToken = hashedToken;
+        user.passwordResetExpires = Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000;
+        await user.save({ validateBeforeSave: false });
+
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+        const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+
+        sendPasswordResetEmail(user, resetUrl, PASSWORD_RESET_EXPIRY_MINUTES);
+
+        res.json(genericResponse);
+    } catch (error) {
+        logger.error("Forgot password error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ─── Reset Password ───────────────────────────────────────────────────────────
+exports.resetPassword = async (req, res) => {
+    try {
+        const { token } = req.params;
+        const { password } = req.body;
+
+        const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+        const user = await User.findOne({
+            passwordResetToken: hashedToken,
+            passwordResetExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: "Invalid or expired reset token" });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(password, salt);
+        user.passwordResetToken = null;
+        user.passwordResetExpires = null;
+        await user.save();
+
+        res.json({ success: true, message: "Password reset successful" });
+    } catch (error) {
+        logger.error("Reset password error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // ─── Logout ───────────────────────────────────────────────────────────────────
 exports.logoutUser = (req, res) => {
     res.clearCookie("token", {
@@ -161,4 +226,4 @@ exports.searchUsers = async (req, res) => {
         logger.error("User search error:", error);
         res.status(500).json({ success: false, message: "Server error during search" });
     }
-};
+};

@@ -9,8 +9,9 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 
+import { useSpring, useTransform } from 'framer-motion';
+
 const AnimatedCounter = ({ value }) => {
-  const { useSpring, useTransform } = require('framer-motion');
   const spring = useSpring(0, { mass: 1, stiffness: 75, damping: 15 });
   const display = useTransform(spring, (current) => 
     `₹${Math.round(current).toLocaleString('en-IN')}`

@@ -24,7 +24,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   const sidebarStyle = {
     width: '260px',
     height: '100vh',
-    background: 'rgba(30, 41, 59, 0.7)',
+    background: 'var(--surface)',
     backdropFilter: 'blur(20px)',
     borderRight: '1px solid var(--surface-border)',
     display: 'flex',

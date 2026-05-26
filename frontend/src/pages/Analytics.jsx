@@ -1,5 +1,6 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import api from '../api';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
@@ -13,7 +14,15 @@ import EmptyState from '../components/ui/EmptyState';
 
 const Analytics = () => {
   const { user } = useContext(AuthContext);
+  const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
+  const [chartsReady, setChartsReady] = useState(false);
+
+  useEffect(() => {
+    // Defer chart mount until after layout/animation is stable
+    const timer = setTimeout(() => setChartsReady(true), 250);
+    return () => clearTimeout(timer);
+  }, []);
   
   // Data states
   const [topExpenses, setTopExpenses] = useState([]);
@@ -59,7 +68,10 @@ const Analytics = () => {
 
   if (loading) {
     return (
-      <SkeletonTheme baseColor="rgba(30, 41, 59, 0.5)" highlightColor="rgba(255, 255, 255, 0.05)">
+      <SkeletonTheme 
+        baseColor={theme === 'dark' ? 'rgba(30, 41, 59, 0.5)' : 'rgba(0, 0, 0, 0.05)'} 
+        highlightColor={theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.1)'}
+      >
         <div style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <Skeleton height={40} width={300} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
@@ -159,20 +171,25 @@ const Analytics = () => {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
             
             {/* Category Trend Chart */}
-            <Card>
+            <Card style={{ minWidth: 0 }}>
               <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Activity size={18} /> Monthly Category Trends
               </h3>
-              <div style={{ height: '300px', width: '100%' }}>
-                {trendData.length > 0 ? (
+              <div style={{ height: '300px', width: '100%', minWidth: 0 }}>
+                {trendData.length > 0 && chartsReady ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'} vertical={false} />
                       <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} />
                       <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                       <RechartsTooltip 
-                        contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff' }}
-                        itemStyle={{ color: '#fff' }}
+                        contentStyle={{ 
+                          backgroundColor: theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.95)', 
+                          borderColor: theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', 
+                          borderRadius: '8px', 
+                          color: theme === 'dark' ? '#fff' : '#0f172a' 
+                        }}
+                        itemStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a' }}
                       />
                       <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                       
@@ -196,12 +213,12 @@ const Analytics = () => {
             </Card>
 
             {/* Spending Heatmap (Area Chart substitute) */}
-            <Card>
+            <Card style={{ minWidth: 0 }}>
               <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Flame size={18} /> 30-Day Spending Intensity
               </h3>
-              <div style={{ height: '300px', width: '100%' }}>
-                {heatmap.length > 0 ? (
+              <div style={{ height: '300px', width: '100%', minWidth: 0 }}>
+                {heatmap.length > 0 && chartsReady ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={heatmap} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <defs>
@@ -210,7 +227,7 @@ const Analytics = () => {
                           <stop offset="95%" stopColor="#ec4899" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'} vertical={false} />
                       <XAxis 
                         dataKey="_id" 
                         stroke="var(--text-secondary)" 
@@ -225,7 +242,12 @@ const Analytics = () => {
                       />
                       <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val}`} />
                       <RechartsTooltip 
-                        contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff' }}
+                        contentStyle={{ 
+                          backgroundColor: theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.95)', 
+                          borderColor: theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', 
+                          borderRadius: '8px', 
+                          color: theme === 'dark' ? '#fff' : '#0f172a' 
+                        }}
                         labelFormatter={(label) => new Date(label).toLocaleDateString()}
                       />
                       <Area type="monotone" dataKey="total" stroke="#ec4899" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" />

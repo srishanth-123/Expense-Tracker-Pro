@@ -185,8 +185,8 @@ const Splits = () => {
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: 500 }}>
                     Paid by {isPaidByMe ? 'You' : split.paidBy.name}
                   </div>
-                  {split.participants.map(p => (
-                    <div key={p.user._id} className="sp-participant-row">
+                  {split.participants.map((p, idx) => (
+                    <div key={`${p.user._id}-${idx}`} className="sp-participant-row">
                       <span className="sp-participant-name">
                         {p.user._id === user._id ? 'You' : p.user.name}
                       </span>

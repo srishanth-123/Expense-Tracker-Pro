@@ -8,6 +8,7 @@ import {
   Receipt, Lightbulb, Target, ChevronRight, RefreshCw
 } from 'lucide-react';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import api from '../api';
 import Card from '../components/ui/Card';
 import './Dashboard.css';
@@ -96,6 +97,7 @@ const InsightCard = ({ insight, index }) => {
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 const Dashboard = () => {
   const { user } = useContext(AuthContext);
+  const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState({
@@ -152,7 +154,10 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <SkeletonTheme baseColor="rgba(30, 41, 59, 0.5)" highlightColor="rgba(255, 255, 255, 0.05)">
+      <SkeletonTheme 
+        baseColor={theme === 'dark' ? 'rgba(30, 41, 59, 0.5)' : 'rgba(0, 0, 0, 0.05)'} 
+        highlightColor={theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.1)'}
+      >
         <div className="dashboard">
           <div style={{ marginBottom: '32px' }}>
             <Skeleton height={40} width={250} />

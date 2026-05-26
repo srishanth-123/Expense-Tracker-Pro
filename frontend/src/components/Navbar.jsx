@@ -1,9 +1,12 @@
 import { useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { Bell, Search, Menu } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import { Bell, Search, Menu, Sun, Moon } from 'lucide-react';
+import NotificationDropdown from './ui/NotificationDropdown';
 
 const Navbar = ({ onMenuClick }) => {
   const { user } = useContext(AuthContext);
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <header style={{
@@ -13,7 +16,7 @@ const Navbar = ({ onMenuClick }) => {
       justifyContent: 'space-between',
       padding: '0 32px',
       borderBottom: '1px solid var(--surface-border)',
-      background: 'rgba(2, 6, 23, 0.5)',
+      background: 'var(--surface)',
       backdropFilter: 'blur(8px)',
       position: 'sticky',
       top: 0,
@@ -38,10 +41,27 @@ const Navbar = ({ onMenuClick }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-        <button style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', position: 'relative' }}>
-          <Bell size={20} />
-          <span style={{ position: 'absolute', top: 0, right: 0, width: '8px', height: '8px', background: 'var(--primary)', borderRadius: '50%' }}></span>
+        <button
+          onClick={toggleTheme}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+            padding: '8px',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background 0.2s ease'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
         </button>
+        <NotificationDropdown />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ textAlign: 'right' }}>

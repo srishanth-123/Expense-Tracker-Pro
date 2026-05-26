@@ -2,16 +2,21 @@ import React, { Suspense, useContext } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, AuthContext } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { SocketProvider } from './context/SocketContext';
 import Layout from './components/Layout';
 
 // Lazy loading pages
 const Login = React.lazy(() => import('./pages/Login'));
 const Register = React.lazy(() => import('./pages/Register'));
+const ForgotPassword = React.lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = React.lazy(() => import('./pages/ResetPassword'));
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Transactions = React.lazy(() => import('./pages/Transactions'));
 const Splits = React.lazy(() => import('./pages/Splits'));
 const Analytics = React.lazy(() => import('./pages/Analytics'));
 const Wallet = React.lazy(() => import('./pages/Wallet'));
+const Notifications = React.lazy(() => import('./pages/Notifications'));
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
@@ -41,6 +46,8 @@ const AppRoutes = () => {
         {/* Public Routes */}
         <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
         <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
+        <Route path="/forgot-password" element={user ? <Navigate to="/" /> : <ForgotPassword />} />
+        <Route path="/reset-password/:token" element={user ? <Navigate to="/" /> : <ResetPassword />} />
 
         {/* Protected Routes inside Layout */}
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
@@ -49,6 +56,7 @@ const AppRoutes = () => {
           <Route path="wallet" element={<Wallet />} />
           <Route path="splits" element={<Splits />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="notifications" element={<Notifications />} />
         </Route>
       </Routes>
     </Suspense>
@@ -58,25 +66,29 @@ const AppRoutes = () => {
 function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Toaster 
-          position="top-right" 
-          toastOptions={{
-            style: {
-              background: '#1e293b',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.1)',
-            },
-            success: {
-              iconTheme: { primary: '#10b981', secondary: '#fff' },
-            },
-            error: {
-              iconTheme: { primary: '#ef4444', secondary: '#fff' },
-            },
-          }} 
-        />
-        <AppRoutes />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <SocketProvider>
+            <Toaster 
+              position="top-right" 
+              toastOptions={{
+                style: {
+                  background: 'var(--surface)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--surface-border)',
+                },
+                success: {
+                  iconTheme: { primary: '#10b981', secondary: '#fff' },
+                },
+                error: {
+                  iconTheme: { primary: '#ef4444', secondary: '#fff' },
+                },
+              }} 
+            />
+            <AppRoutes />
+          </SocketProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }

@@ -21,6 +21,53 @@
   --radius-sm: 8px;
   --glass-blur: blur(12px);
   --shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+
+  /* Component-specific */
+  --divider-color: rgba(255, 255, 255, 0.04);
+  --insight-bg: rgba(99, 102, 241, 0.06);
+  --insight-border: rgba(99, 102, 241, 0.12);
+  --prediction-bg: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(16,185,129,0.08));
+  --prediction-border: rgba(99,102,241,0.2);
+  --top-expense-bg: rgba(239, 68, 68, 0.04);
+  --top-expense-border: rgba(239, 68, 68, 0.08);
+  --top-expense-hover: rgba(239, 68, 68, 0.08);
+  --budget-track: rgba(255, 255, 255, 0.06);
+  --greeting-gradient: linear-gradient(135deg, #f8fafc 0%, #94a3b8 100%);
+}
+
+[data-theme="light"] {
+  /* Light Mode Palette */
+  --bg-dark: #f8fafc;
+  --bg-darker: #ffffff;
+  --surface: rgba(255, 255, 255, 0.85);
+  --surface-border: rgba(0, 0, 0, 0.08);
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  
+  /* Brand Accents */
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+
+  /* Geometry & Glass */
+  --radius: 16px;
+  --radius-sm: 8px;
+  --glass-blur: blur(12px);
+  --shadow: 0 4px 30px rgba(0, 0, 0, 0.08);
+
+  /* Component-specific */
+  --divider-color: rgba(0, 0, 0, 0.06);
+  --insight-bg: rgba(99, 102, 241, 0.08);
+  --insight-border: rgba(99, 102, 241, 0.15);
+  --prediction-bg: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(16,185,129,0.06));
+  --prediction-border: rgba(99,102,241,0.15);
+  --top-expense-bg: rgba(239, 68, 68, 0.05);
+  --top-expense-border: rgba(239, 68, 68, 0.1);
+  --top-expense-hover: rgba(239, 68, 68, 0.1);
+  --budget-track: rgba(0, 0, 0, 0.06);
+  --greeting-gradient: linear-gradient(135deg, #0f172a 0%, #64748b 100%);
 }
 
 * {
@@ -39,6 +86,13 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+[data-theme="light"] body {
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
 }
 
 /* Glassmorphism Card Utility */
@@ -69,6 +123,10 @@ input, select, textarea {
   font-size: 0.95rem;
   outline: none;
   transition: all 0.2s ease;
+}
+
+[data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
+  background: rgba(255, 255, 255, 0.8);
 }
 
 input:focus, select:focus, textarea:focus {
@@ -184,10 +242,24 @@ label {
 ::-webkit-scrollbar-track {
   background: rgba(15, 23, 42, 0.5);
 }
+
+[data-theme="light"] ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
 }
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }

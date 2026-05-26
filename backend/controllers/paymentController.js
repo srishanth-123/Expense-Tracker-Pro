@@ -1,8 +1,12 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const Payment = require("../models/Payment");
+const User = require("../models/user");
 const idempotencyHandler = require("../utils/idempotency");
 const sagaService = require("../services/saga.service");
+const Notification = require("../models/notificationModel");
+const { sendNotificationToUser } = require("../utils/socket");
+const { sendPaymentSuccessEmail } = require("../services/emailService");
 
 // Note: Ensure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are in .env
 const razorpay = new Razorpay({
@@ -98,6 +102,23 @@ exports.verifyPayment = async (req, res) => {
                     razorpay_order_id,
                     razorpay_payment_id
                 );
+
+                const notification = await Notification.create({
+                    user: paymentDoc.user,
+                    type: "WALLET_TOPUP",
+                    message: `Successfully topped up ₹${amountInRupees} to your wallet.`
+                });
+                sendNotificationToUser(paymentDoc.user, notification);
+
+                const user = await User.findById(paymentDoc.user).select("name email walletBalance");
+                if (user) {
+                    sendPaymentSuccessEmail(user, {
+                        amount: amountInRupees,
+                        walletBalance: user.walletBalance,
+                        transactionId: razorpay_payment_id,
+                        referenceId: razorpay_order_id
+                    });
+                }
             });
         } catch (sagaError) {
             if (sagaError.message.includes("Duplicate request")) {

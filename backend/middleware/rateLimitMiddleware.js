@@ -2,7 +2,7 @@ const rateLimit = require('express-rate-limit');
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10,
+    max: 1000,
     message: { success: false, message: 'Too many authentication attempts, please try again after 15 minutes' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -26,7 +26,7 @@ const walletLimiter = rateLimit({
 
 const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
+    max: process.env.NODE_ENV === 'production' ? 500 : 5000, // Higher limit in dev for SPA
     message: { success: false, message: 'Too many requests, please try again after 15 minutes' },
     standardHeaders: true,
     legacyHeaders: false,
