@@ -1,9 +1,9 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useCallback } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import api from '../api';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
   AreaChart, Area
 } from 'recharts';
 import { TrendingUp, PieChart as PieChartIcon, Activity, ArrowUpRight, Flame } from 'lucide-react';
@@ -11,18 +11,13 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import Card from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
+import ChartContainer from '../components/ui/ChartContainer';
+import AIInsightsPanel from '../components/AIInsightsPanel';
 
 const Analytics = () => {
   const { user } = useContext(AuthContext);
   const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
-  const [chartsReady, setChartsReady] = useState(false);
-
-  useEffect(() => {
-    // Defer chart mount until after layout/animation is stable
-    const timer = setTimeout(() => setChartsReady(true), 250);
-    return () => clearTimeout(timer);
-  }, []);
   
   // Data states
   const [topExpenses, setTopExpenses] = useState([]);
@@ -31,40 +26,48 @@ const Analytics = () => {
   const [heatmap, setHeatmap] = useState([]);
   const [prediction, setPrediction] = useState(null);
 
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [
+        topRes,
+        trendRes,
+        insightsRes,
+        heatmapRes,
+        predRes
+      ] = await Promise.all([
+        api.get('/analytics/top-expenses'),
+        api.get('/analytics/category-trend'),
+        api.get('/analytics/insights'),
+        api.get('/analytics/heatmap'),
+        api.get('/analytics/prediction')
+      ]);
+
+      setTopExpenses(Array.isArray(topRes) ? topRes : topRes.data || []);
+      setCategoryTrend(trendRes.labels ? trendRes : trendRes.data || { labels: [], datasets: [] });
+      setInsights(insightsRes.insights || insightsRes.insight ? insightsRes : null);
+      setHeatmap(Array.isArray(heatmapRes) ? heatmapRes : heatmapRes.data || []);
+      setPrediction(predRes.predictedExpense !== undefined ? predRes : null);
+    } catch (error) {
+      console.error("Failed to load analytics data:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setLoading(true);
-        const [
-          topRes,
-          trendRes,
-          insightsRes,
-          heatmapRes,
-          predRes
-        ] = await Promise.all([
-          api.get('/analytics/top-expenses'),
-          api.get('/analytics/category-trend'),
-          api.get('/analytics/insights'),
-          api.get('/analytics/heatmap'),
-          api.get('/analytics/prediction')
-        ]);
-
-        setTopExpenses(Array.isArray(topRes) ? topRes : topRes.data || []);
-        setCategoryTrend(trendRes.labels ? trendRes : trendRes.data || { labels: [], datasets: [] });
-        setInsights(insightsRes.insight ? insightsRes : insightsRes.data || null);
-        setHeatmap(Array.isArray(heatmapRes) ? heatmapRes : heatmapRes.data || []);
-        setPrediction(predRes.predictedExpense ? predRes : predRes.data || null);
-      } catch (error) {
-        console.error("Failed to load analytics data:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (user) {
       fetchAnalytics();
     }
-  }, [user]);
+  }, [user, fetchAnalytics]);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      if (user) fetchAnalytics();
+    };
+    window.addEventListener('financialDataUpdated', handleUpdate);
+    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
+  }, [user, fetchAnalytics]);
 
   if (loading) {
     return (
@@ -120,6 +123,9 @@ const Analytics = () => {
         />
       ) : (
         <>
+          {/* AI Financial Insights — animated, LLM-generated */}
+          <AIInsightsPanel />
+
           {/* Top Metrics Row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
             
@@ -132,7 +138,7 @@ const Analytics = () => {
               </div>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <p style={{ fontSize: '1.3rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4 }}>
-                  {insights?.insight || "Not enough data yet."}
+                  {insights?.insight || insights?.insights?.[0] || "Not enough data yet."}
                 </p>
                 {insights?.prevTotal > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '0.9rem' }}>
@@ -175,12 +181,22 @@ const Analytics = () => {
               <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Activity size={18} /> Monthly Category Trends
               </h3>
-              <div style={{ height: '300px', width: '100%', minWidth: 0 }}>
-                {trendData.length > 0 && chartsReady ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              {trendData.length > 0 ? (
+                <ChartContainer height={300}>
+                  {({ width, height }) => (
+                    <BarChart width={width} height={height} data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'} vertical={false} />
-                      <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} />
+                      <XAxis 
+                        dataKey="name" 
+                        stroke="var(--text-secondary)" 
+                        fontSize={11} 
+                        tickLine={false} 
+                        axisLine={false}
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                        height={60}
+                      />
                       <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                       <RechartsTooltip 
                         contentStyle={{ 
@@ -201,15 +217,15 @@ const Analytics = () => {
                           fill={colors[index % colors.length]} 
                           radius={[index === categoryTrend.datasets.length - 1 ? 4 : 0, index === categoryTrend.datasets.length - 1 ? 4 : 0, 0, 0]}
                         />
-                      ))}
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-                    Not enough data for category trends.
-                  </div>
-                )}
-              </div>
+                    ))}
+                  </BarChart>
+                  )}
+                </ChartContainer>
+              ) : (
+                <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                  Not enough data for category trends.
+                </div>
+              )}
             </Card>
 
             {/* Spending Heatmap (Area Chart substitute) */}
@@ -217,10 +233,10 @@ const Analytics = () => {
               <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Flame size={18} /> 30-Day Spending Intensity
               </h3>
-              <div style={{ height: '300px', width: '100%', minWidth: 0 }}>
-                {heatmap.length > 0 && chartsReady ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={heatmap} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              {heatmap.length > 0 ? (
+                <ChartContainer height={300}>
+                  {({ width, height }) => (
+                    <AreaChart width={width} height={height} data={heatmap} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
                       <defs>
                         <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ec4899" stopOpacity={0.4}/>
@@ -231,16 +247,24 @@ const Analytics = () => {
                       <XAxis 
                         dataKey="_id" 
                         stroke="var(--text-secondary)" 
-                        fontSize={12} 
+                        fontSize={11} 
                         tickLine={false} 
                         axisLine={false}
+                        interval="preserveStartEnd"
                         tickFormatter={(val) => {
                           // val is YYYY-MM-DD
                           const d = new Date(val);
-                          return `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })}`;
+                          return `${d.getDate()}/${d.getMonth() + 1}`;
                         }}
                       />
-                      <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val}`} />
+                      <YAxis 
+                        stroke="var(--text-secondary)" 
+                        fontSize={12} 
+                        tickLine={false} 
+                        axisLine={false} 
+                        tickFormatter={(val) => `₹${val}`}
+                        width={50}
+                      />
                       <RechartsTooltip 
                         contentStyle={{ 
                           backgroundColor: theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.95)', 
@@ -252,13 +276,13 @@ const Analytics = () => {
                       />
                       <Area type="monotone" dataKey="total" stroke="#ec4899" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" />
                     </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-                    Not enough daily data for heatmap.
-                  </div>
-                )}
-              </div>
+                  )}
+                </ChartContainer>
+              ) : (
+                <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+                  Not enough daily data for heatmap.
+                </div>
+              )}
             </Card>
           </div>
         </>

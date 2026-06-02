@@ -15,6 +15,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Transactions = React.lazy(() => import('./pages/Transactions'));
 const Splits = React.lazy(() => import('./pages/Splits'));
 const Analytics = React.lazy(() => import('./pages/Analytics'));
+const Budgets = React.lazy(() => import('./pages/Budgets'));
 const Wallet = React.lazy(() => import('./pages/Wallet'));
 const Notifications = React.lazy(() => import('./pages/Notifications'));
 
@@ -55,6 +56,7 @@ const AppRoutes = () => {
           <Route path="transactions" element={<Transactions />} />
           <Route path="wallet" element={<Wallet />} />
           <Route path="splits" element={<Splits />} />
+          <Route path="budgets" element={<Budgets />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="notifications" element={<Notifications />} />
         </Route>

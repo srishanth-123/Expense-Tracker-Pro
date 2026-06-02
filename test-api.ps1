@@ -64,7 +64,7 @@ try {
         splitType = "equal"
         participants = @(
             @{ user = "6a152fc406564dca2cbe12d4" },  # Current user
-            @{ user = "6a152fc406564dca2cbe12d4" }   # Another user (using same ID for test)
+            @{ user = "6a1d7871f1fa13770ae8515a" }   # Another user (Test Receiver)
         )
     } | ConvertTo-Json -Depth 10
     $response = Invoke-RestMethod -Uri "http://localhost:5000/api/v1/split/create" -Method POST -Headers $headers -Body $body

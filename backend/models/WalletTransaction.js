@@ -17,7 +17,7 @@ const walletTransactionSchema = new mongoose.Schema({
     },
     source: {
         type: String,
-        enum: ["upi", "expense", "split", "topup"],
+        enum: ["upi", "expense", "split", "topup", "subscription"],
         required: true
     },
     status: {
@@ -27,6 +27,10 @@ const walletTransactionSchema = new mongoose.Schema({
     },
     referenceId: {
         type: String
+    },
+    description: {
+        type: String,
+        trim: true
     }
 }, { timestamps: true });
 

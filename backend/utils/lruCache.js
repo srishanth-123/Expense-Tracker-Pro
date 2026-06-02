@@ -13,11 +13,10 @@ const searchCache = new LRUCache({
 function invalidateUserSearchCache(userId) {
     if (!userId) return;
     const stringId = userId.toString();
-    for (const key of searchCache.keys()) {
-        if (key.startsWith(`search:${stringId}:`)) {
-            searchCache.delete(key);
-        }
-    }
+    const keysToDelete = Array.from(searchCache.keys()).filter(key => 
+        key.startsWith(`search:${stringId}:`)
+    );
+    keysToDelete.forEach(key => searchCache.delete(key));
 }
 
 module.exports = {

@@ -1,4 +1,5 @@
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { Bell, Search, Menu, Sun, Moon } from 'lucide-react';
@@ -7,6 +8,15 @@ import NotificationDropdown from './ui/NotificationDropdown';
 const Navbar = ({ onMenuClick }) => {
   const { user } = useContext(AuthContext);
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSearch = (e) => {
+    if (e.key === 'Enter' && searchQuery.trim()) {
+      navigate(`/transactions?search=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchQuery('');
+    }
+  };
 
   return (
     <header style={{
@@ -35,7 +45,19 @@ const Navbar = ({ onMenuClick }) => {
         <input 
           type="text" 
           placeholder="Search transactions..." 
-          style={{ paddingLeft: '44px', background: 'rgba(30, 41, 59, 0.4)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '24px' }}
+          value={searchQuery || ''}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={handleSearch}
+          style={{ 
+            paddingLeft: '44px', 
+            background: 'var(--input-bg)', 
+            border: '1px solid var(--input-border)', 
+            borderRadius: '24px',
+            color: 'var(--text-primary)',
+            width: '100%',
+            padding: '10px 16px 10px 44px',
+            fontSize: '0.9rem'
+          }}
         />
         </div>
       </div>

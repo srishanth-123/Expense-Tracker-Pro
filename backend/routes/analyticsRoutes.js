@@ -3,7 +3,7 @@ const router=express.Router();
 const protect=require("../middleware/authMiddleware");
 
 const{
-    monthlySummary,
+    allTimeSummary,
     categoryBreakdown,
     searchTransactions,
     monthlyReport,
@@ -11,10 +11,11 @@ const{
     categoryTrend,
     smartInsights,
     dailyHeatmap,
-    spendingPrediction
+    spendingPrediction,
+    aiInsights
 }=require("../controllers/analyticsController");
 
-router.get("/summary",protect,monthlySummary);
+router.get("/summary",protect,allTimeSummary);
 router.get("/category",protect,categoryBreakdown);
 router.get("/search",protect,searchTransactions);
 router.get("/report",protect,monthlyReport);
@@ -24,5 +25,6 @@ router.get("/category-trend",protect,categoryTrend);
 router.get("/insights",protect,smartInsights);
 router.get("/heatmap",protect,dailyHeatmap);
 router.get("/prediction",protect,spendingPrediction);
+router.get("/ai-insights",protect,aiInsights);
 
 module.exports=router;

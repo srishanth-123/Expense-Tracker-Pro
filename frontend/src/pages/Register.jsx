@@ -1,7 +1,7 @@
 import { useState, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { Wallet, UserPlus } from 'lucide-react';
+import { Wallet, UserPlus, Check, X } from 'lucide-react';
 
 const Register = () => {
   const [name, setName] = useState('');
@@ -63,13 +63,44 @@ const Register = () => {
           </div>
           <div>
             <label>Password</label>
-            <input 
-              type="password" 
-              placeholder="••••••••" 
+            <input
+              type="password"
+              placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required 
+              required
             />
+            {password.length > 0 && (
+              <div style={{
+                marginTop: '8px',
+                padding: '10px 12px',
+                background: 'rgba(99, 102, 241, 0.08)',
+                border: '1px solid rgba(99, 102, 241, 0.2)',
+                borderRadius: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                fontSize: '0.78rem',
+                animation: 'fadeIn 0.2s ease',
+              }}>
+                {[
+                  { label: 'At least 8 characters', valid: password.length >= 8 },
+                  { label: 'One uppercase letter', valid: /[A-Z]/.test(password) },
+                  { label: 'One number', valid: /\d/.test(password) },
+                ].map((rule) => (
+                  <div key={rule.label} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    color: rule.valid ? 'var(--success)' : 'var(--text-secondary)',
+                    transition: 'color 0.2s ease',
+                  }}>
+                    {rule.valid ? <Check size={14} /> : <X size={14} />}
+                    <span>{rule.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <button type="submit" className="btn" style={{ marginTop: '8px', background: 'var(--success)' }}>
             <UserPlus size={18} /> Sign Up

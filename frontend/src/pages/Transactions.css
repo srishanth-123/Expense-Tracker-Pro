@@ -180,8 +180,8 @@
 
 .tx-page-btn {
   padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text-primary);
   border-radius: 6px;
   cursor: pointer;
@@ -189,7 +189,8 @@
 }
 
 .tx-page-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--primary);
 }
 
 .tx-page-btn:disabled {
@@ -202,7 +203,6 @@
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -248,7 +248,7 @@
 .type-toggle {
   display: flex;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--input-bg);
   padding: 6px;
   border-radius: 8px;
   border: 1px solid var(--surface-border);
@@ -258,23 +258,35 @@
 .type-btn {
   flex: 1;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 6px;
-  color: #e2e8f0;
+  color: var(--text-primary);
   cursor: pointer;
   font-weight: 600;
   transition: all 0.2s;
   text-align: center;
 }
 
+.type-btn:hover:not(.active) {
+  background: var(--divider-color);
+}
+
+.type-btn.active {
+  background: var(--primary);
+  border-color: var(--primary-hover);
+  color: white;
+}
+
 .type-btn.active.expense {
   background: var(--danger);
+  border-color: var(--danger);
   color: white;
 }
 
 .type-btn.active.income {
   background: var(--success);
+  border-color: var(--success);
   color: white;
 }
 

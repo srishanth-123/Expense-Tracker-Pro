@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useContext } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   Search, Plus, ArrowUpRight, ArrowDownRight, 
   Trash2, Edit2, RotateCcw, X, Inbox
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { AuthContext } from '../context/AuthContext';
 import api from '../api';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -23,6 +25,9 @@ const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN', {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const Transactions = () => {
+  const { user, refreshUser } = useContext(AuthContext);
+  const [searchParams] = useSearchParams();
+  
   // ── State ──
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -35,7 +40,7 @@ const Transactions = () => {
   const [filters, setFilters] = useState({
     type: '',
     category: '',
-    search: '', 
+    search: searchParams.get('search') || '',
   });
 
   // Modal Form State
@@ -46,7 +51,8 @@ const Transactions = () => {
     amount: '',
     category: '',
     description: '',
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    paymentMethod: 'regular' // 'regular' or 'wallet'
   });
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -67,6 +73,7 @@ const Transactions = () => {
       const params = new URLSearchParams({ page, limit: 10 });
       if (filters.type) params.append('type', filters.type);
       if (filters.category) params.append('category', filters.category);
+      if (filters.search) params.append('search', filters.search);
       
       const res = await api.get(`/transactions?${params.toString()}`);
       
@@ -74,7 +81,11 @@ const Transactions = () => {
       setTotalPages(res.pages || 1);
       setTotalItems(res.total || 0);
     } catch (err) {
-      toast.error('Failed to fetch transactions');
+      console.error('Fetch transactions error:', err);
+      const msg = err.response?.status === 429 
+        ? 'Too many requests. Please wait a moment.' 
+        : err.response?.data?.message || 'Failed to fetch transactions';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -94,12 +105,21 @@ const Transactions = () => {
   }, []);
 
   useEffect(() => {
-    fetchTransactions();
-  }, [page, filters.type, filters.category]);
+    setFilters(prev => ({ ...prev, search: searchParams.get('search') || '' }));
+  }, [searchParams]);
 
-  const filteredTransactions = transactions.filter(t => 
-    t.description?.toLowerCase().includes(filters.search.toLowerCase())
-  );
+  useEffect(() => {
+    fetchTransactions();
+  }, [page, filters.type, filters.category, filters.search]);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      fetchTransactions();
+      fetchCategories();
+    };
+    window.addEventListener('financialDataUpdated', handleUpdate);
+    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
+  }, []);
 
   // ── Actions ──
   const handleFilterChange = (e) => {
@@ -117,7 +137,8 @@ const Transactions = () => {
         amount: txn.amount,
         category: txn.category?._id || txn.category,
         description: txn.description || '',
-        date: new Date(txn.date || txn.createdAt).toISOString().split('T')[0]
+        date: new Date(txn.date || txn.createdAt).toISOString().split('T')[0],
+        paymentMethod: 'regular' // Default to regular for edits
       });
     } else {
       setEditingId(null);
@@ -126,7 +147,8 @@ const Transactions = () => {
         amount: '',
         category: categories.length > 0 ? categories[0]._id : '',
         description: '',
-        date: new Date().toISOString().split('T')[0]
+        date: new Date().toISOString().split('T')[0],
+        paymentMethod: 'regular'
       });
     }
     setIsModalOpen(true);
@@ -143,6 +165,10 @@ const Transactions = () => {
       } else {
         await api.post('/transactions', formData);
         toast.success('Transaction added');
+        // Refresh user data to update wallet balance if wallet was used
+        if (formData.paymentMethod === 'wallet') {
+          refreshUser();
+        }
       }
       setIsModalOpen(false);
       fetchTransactions();
@@ -249,7 +275,7 @@ const Transactions = () => {
                 </div>
               ))}
             </div>
-          ) : filteredTransactions.length === 0 ? (
+          ) : transactions.length === 0 ? (
             <EmptyState 
               icon={Inbox}
               title="No transactions found"
@@ -258,7 +284,7 @@ const Transactions = () => {
               style={{ border: 'none', background: 'transparent', boxShadow: 'none' }}
             />
           ) : (
-            filteredTransactions.map(t => {
+            transactions.map(t => {
               const isIncome = t.type === 'income';
               const isDeleted = t.isDeleted;
               
@@ -309,24 +335,24 @@ const Transactions = () => {
         </div>
 
         {/* Pagination */}
-        {!loading && totalPages > 1 && (
+        {!loading && (
           <div className="tx-pagination">
             <span>Showing page {page} of {totalPages} ({totalItems} total)</span>
             <div className="tx-page-controls">
-              <Button 
-                variant="secondary"
+              <button 
+                className="tx-page-btn"
                 disabled={page === 1}
                 onClick={() => setPage(p => Math.max(1, p - 1))}
               >
                 Previous
-              </Button>
-              <Button 
-                variant="secondary"
+              </button>
+              <button 
+                className="tx-page-btn"
                 disabled={page === totalPages}
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               >
                 Next
-              </Button>
+              </button>
             </div>
           </div>
         )}
@@ -436,6 +462,35 @@ const Transactions = () => {
                   onChange={e => setFormData({...formData, description: e.target.value})}
                 />
               </div>
+
+              {formData.type === 'expense' && (
+                <div>
+                  <label>Payment Method</label>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      className={`type-btn ${formData.paymentMethod === 'regular' ? 'active' : ''}`}
+                      onClick={() => setFormData({...formData, paymentMethod: 'regular'})}
+                      style={{ flex: 1 }}
+                    >
+                      Regular
+                    </button>
+                    <button
+                      type="button"
+                      className={`type-btn ${formData.paymentMethod === 'wallet' ? 'active' : ''}`}
+                      onClick={() => setFormData({...formData, paymentMethod: 'wallet'})}
+                      style={{ flex: 1 }}
+                    >
+                      Wallet
+                    </button>
+                  </div>
+                  {formData.paymentMethod === 'wallet' && (
+                    <div style={{ marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Available: ₹{user?.walletBalance?.toLocaleString() || 0}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label>Date</label>

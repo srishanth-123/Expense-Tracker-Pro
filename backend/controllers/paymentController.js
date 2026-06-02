@@ -62,7 +62,7 @@ exports.verifyPayment = async (req, res) => {
             return res.status(400).json({success: false, message: "Invalid request data"});
         }
 
-        const secret = process.env.RAZORPAY_KEY_SECRET;
+        const secret = process.env.RAZORPAY_KEY_SECRET || "test_secret";
         
         // Generate cryptographic signature to verify authenticity
         const body = razorpay_order_id + "|" + razorpay_payment_id;
@@ -133,5 +133,39 @@ exports.verifyPayment = async (req, res) => {
     } catch (error) {
         console.error("Payment verification error:", error);
         res.status(500).json({success: false, message: "Server error"});
+    }
+};
+
+exports.subscribePro = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const user = await User.findById(userId).select("isPro walletBalance");
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        if (user.isPro) {
+            return res.status(400).json({ success: false, message: "User is already a Pro member" });
+        }
+
+        const price = 499; // Price in INR
+        if (user.walletBalance < price) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `Insufficient wallet balance. You need ₹${price} to upgrade, but your current balance is ₹${user.walletBalance.toFixed(2)}.` 
+            });
+        }
+
+        // Run the Saga
+        await sagaService.runProSubscriptionUpgradeSaga(userId, price);
+
+        res.json({
+            success: true,
+            message: "Successfully upgraded to Pro membership!",
+            data: { isPro: true }
+        });
+    } catch (error) {
+        console.error("Pro subscription upgrade error:", error);
+        res.status(500).json({ success: false, message: error.message || "Server error during Pro upgrade" });
     }
 };

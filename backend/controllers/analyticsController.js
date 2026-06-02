@@ -1,16 +1,33 @@
 const Transaction = require("../models/Transaction");
 const redis = require("../config/redis");
 const analyticsService = require("../services/analytics.service");
+const aiInsightsService = require("../services/aiInsightsService");
 
-exports.monthlySummary = async (req, res) => {
+exports.allTimeSummary = async (req, res) => {
     try {
-        const cacheKey = `analytics:monthlySummary:${req.user._id}`;
+        const cacheKey = `analytics:allTimeSummary:${req.user._id}`;
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -21,22 +38,33 @@ exports.monthlySummary = async (req, res) => {
             {
                 $group: {
                     _id: "$type",
-                    total: { $sum: "$amount" }
+                    total: { $sum: "$amount" },
+                    count: { $sum: 1 }
                 }
             }
         ]);
 
         let totalIncome = 0;
         let totalExpense = 0;
+        let incomeCount = 0;
+        let expenseCount = 0;
 
         data.forEach(item => {
-            if (item._id === "income") totalIncome = item.total;
-            if (item._id === "expense") totalExpense = item.total;
+            if (item._id === "income") {
+                totalIncome = item.total;
+                incomeCount = item.count;
+            }
+            if (item._id === "expense") {
+                totalExpense = item.total;
+                expenseCount = item.count;
+            }
         });
 
         const result = {
             totalIncome,
-            totalExpense
+            totalExpense,
+            incomeCount,
+            expenseCount
         };
 
         if (redis) {
@@ -61,9 +89,25 @@ exports.categoryBreakdown = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -145,9 +189,25 @@ exports.monthlyReport = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -207,9 +267,26 @@ exports.topExpenses = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                // Clear corrupted cache
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -217,7 +294,7 @@ exports.topExpenses = async (req, res) => {
 
         if (redis) {
             try {
-                await redis.set(cacheKey, data, { ex: 300 });
+                await redis.set(cacheKey, JSON.stringify(data), { ex: 300 });
             } catch (err) {
                 console.warn("Redis SET error:", err.message);
             }
@@ -235,9 +312,25 @@ exports.categoryTrend = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -263,9 +356,25 @@ exports.smartInsights = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -291,9 +400,25 @@ exports.dailyHeatmap = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -301,7 +426,7 @@ exports.dailyHeatmap = async (req, res) => {
 
         if (redis) {
             try {
-                await redis.set(cacheKey, data, { ex: 300 });
+                await redis.set(cacheKey, JSON.stringify(data), { ex: 300 });
             } catch (err) {
                 console.warn("Redis SET error:", err.message);
             }
@@ -319,9 +444,25 @@ exports.spendingPrediction = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
@@ -338,5 +479,54 @@ exports.spendingPrediction = async (req, res) => {
         res.json({success: true, message: "Success", data: data});
     } catch (error) {
         res.status(500).json({success: false, message: "Server error"});
+    }
+};
+
+// ─── AI Financial Insights ───────────────────────────────────────────────────
+exports.aiInsights = async (req, res) => {
+    try {
+        const cacheKey = `analytics:aiInsights:${req.user._id}`;
+        const forceRefresh = req.query.refresh === "true";
+
+        if (redis && !forceRefresh) {
+            try {
+                const cached = await redis.get(cacheKey);
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({ success: true, message: "Success", data: { ...data, cached: true } });
+                }
+            } catch (err) {
+                console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
+            }
+        }
+
+        const result = await aiInsightsService.generateInsights(req.user._id);
+
+        if (redis) {
+            try {
+                // 6h TTL — insights are stable for a few hours
+                await redis.set(cacheKey, result, { ex: 60 * 60 * 6 });
+            } catch (err) {
+                console.warn("Redis SET error:", err.message);
+            }
+        }
+
+        res.json({ success: true, message: "Success", data: { ...result, cached: false } });
+    } catch (error) {
+        console.error("AI insights error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };

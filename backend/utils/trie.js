@@ -93,7 +93,7 @@ class SearchRegistry {
             const Transaction = require('../models/Transaction');
 
             // Load Categories
-            const categories = await Category.find({});
+            const categories = await Category.find({ isDeleted: false });
             categories.forEach(cat => {
                 if (cat.name && cat.user) {
                     this.getTrie(cat.user).insert(cat.name, {
@@ -105,7 +105,7 @@ class SearchRegistry {
             });
 
             // Load Transactions
-            const transactions = await Transaction.find({ description: { $ne: null, $ne: '' } });
+            const transactions = await Transaction.find({ description: { $ne: null, $ne: '' }, isDeleted: false });
             transactions.forEach(txn => {
                 if (txn.description && txn.user) {
                     this.getTrie(txn.user).insert(txn.description, {

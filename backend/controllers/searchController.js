@@ -20,9 +20,25 @@ exports.search = async (req, res) => {
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Success", data: typeof cached === "string" ? JSON.parse(cached) : cached});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Success", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 

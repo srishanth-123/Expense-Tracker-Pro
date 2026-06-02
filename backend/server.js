@@ -33,7 +33,7 @@ const startServer = async () => {
             origin: process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
             credentials: true,
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-            allowedHeaders: ['Content-Type', 'Authorization']
+            allowedHeaders: ['Content-Type', 'Authorization', 'x-idempotency-key']
         }));
 
         // Cookie parser (must come before routes)
@@ -84,6 +84,7 @@ const startServer = async () => {
         app.use("/api/v1/split",        require("./routes/splitRoutes"));
         app.use("/api/v1/payment",      require("./routes/paymentRoutes"));
         app.use("/api/v1/notifications", require("./routes/notificationRoutes"));
+        app.use("/api/v1/chat",          require("./routes/chatRoutes"));
 
         // ─── Legacy route aliases (keep old /api/* working during migration) ──────────
         app.use("/api/auth",         require("./routes/authRoutes"));
@@ -96,6 +97,7 @@ const startServer = async () => {
         app.use("/api/split",        require("./routes/splitRoutes"));
         app.use("/api/payment",      require("./routes/paymentRoutes"));
         app.use("/api/notifications", require("./routes/notificationRoutes"));
+        app.use("/api/chat",         require("./routes/chatRoutes"));
 
         // ─── Global Error Handler ─────────────────────────────────────────────────────
         const errorHandler = require("./middleware/errorMiddleware");

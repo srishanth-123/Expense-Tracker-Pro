@@ -1,0 +1,201 @@
+import { useEffect, useState } from 'react';
+import {
+  Sparkles, RefreshCw, TrendingUp, TrendingDown, PieChart, AlertTriangle,
+  PiggyBank, Calendar, Zap, Target, Activity
+} from 'lucide-react';
+import api from '../api';
+import Card from './ui/Card';
+
+const ICON_MAP = {
+  'trending-up': TrendingUp,
+  'trending-down': TrendingDown,
+  'pie-chart': PieChart,
+  'alert-triangle': AlertTriangle,
+  'piggy-bank': PiggyBank,
+  'calendar': Calendar,
+  'zap': Zap,
+  'target': Target,
+  'activity': Activity,
+};
+
+const SEVERITY_STYLES = {
+  info:    { accent: '#3b82f6', bg: 'rgba(59,130,246,0.08)',  border: 'rgba(59,130,246,0.25)' },
+  success: { accent: '#10b981', bg: 'rgba(16,185,129,0.08)',  border: 'rgba(16,185,129,0.25)' },
+  warning: { accent: '#f59e0b', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.25)' },
+  danger:  { accent: '#ef4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)' },
+};
+
+const InsightCard = ({ insight, index }) => {
+  const Icon = ICON_MAP[insight.icon] || Activity;
+  const style = SEVERITY_STYLES[insight.severity] || SEVERITY_STYLES.info;
+
+  return (
+    <div
+      className="ai-insight-card"
+      style={{
+        background: style.bg,
+        border: `1px solid ${style.border}`,
+        borderRadius: 14,
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        minWidth: 0,
+        animation: `aiInsightFade 0.5s ease ${index * 0.08}s both`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          background: style.accent,
+          color: '#fff',
+          width: 32, height: 32,
+          borderRadius: 10,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <Icon size={16} />
+        </div>
+        <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+          {insight.title}
+        </h4>
+      </div>
+      <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+        {insight.message}
+      </p>
+    </div>
+  );
+};
+
+const AIInsightsPanel = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = async (force = false) => {
+    try {
+      force ? setRefreshing(true) : setLoading(true);
+      setError(null);
+      const res = await api.get(`/analytics/ai-insights${force ? '?refresh=true' : ''}`);
+      // api interceptor already unwraps { success, data }
+      setData(res);
+    } catch (err) {
+      console.error('AI insights load failed:', err);
+      setError(err?.message || 'Failed to load AI insights');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { load(false); }, []);
+
+  return (
+    <Card style={{ minWidth: 0, position: 'relative', overflow: 'hidden' }}>
+      <style>{`
+        @keyframes aiInsightFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes aiShimmer {
+          0% { background-position: -200px 0; }
+          100% { background-position: 200px 0; }
+        }
+        .ai-insight-card { transition: transform 0.2s ease; }
+        .ai-insight-card:hover { transform: translateY(-2px); }
+        .ai-skeleton {
+          background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.04) 100%);
+          background-size: 400px 100%;
+          animation: aiShimmer 1.4s linear infinite;
+          border-radius: 14px;
+        }
+      `}</style>
+
+      {/* Decorative gradient blob */}
+      <div style={{
+        position: 'absolute', top: -40, right: -40,
+        width: 140, height: 140,
+        background: 'linear-gradient(135deg, #8b5cf6, #ec4899)',
+        opacity: 0.15, filter: 'blur(40px)', borderRadius: '50%',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #8b5cf6, #ec4899)',
+            color: '#fff', padding: 8, borderRadius: 10,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Sparkles size={18} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', margin: 0, fontWeight: 700 }}>
+              AI Financial Insights
+            </h3>
+            {data?.source && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', letterSpacing: 0.3 }}>
+                {data.source === 'llm' ? `Generated by ${data.provider || 'AI'}` : 'Rule-based analysis'}
+                {data.cached ? ' · cached' : ''}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing || loading}
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--surface-border, rgba(255,255,255,0.15))',
+            color: 'var(--text-secondary)',
+            padding: '8px 12px', borderRadius: 10,
+            display: 'flex', alignItems: 'center', gap: 6,
+            cursor: refreshing || loading ? 'not-allowed' : 'pointer',
+            fontSize: '0.8rem',
+            opacity: refreshing || loading ? 0.5 : 1,
+          }}
+          title="Regenerate insights"
+        >
+          <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Summary */}
+      {data?.summary && !loading && (
+        <p style={{
+          fontSize: '0.95rem', color: 'var(--text-primary)',
+          marginBottom: 16, lineHeight: 1.5,
+          padding: '12px 14px',
+          background: 'rgba(139,92,246,0.08)',
+          borderLeft: '3px solid #8b5cf6',
+          borderRadius: 8,
+        }}>
+          {data.summary}
+        </p>
+      )}
+
+      {/* Body */}
+      {loading ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+          {[0, 1, 2, 3].map(i => <div key={i} className="ai-skeleton" style={{ height: 110 }} />)}
+        </div>
+      ) : error ? (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{error}</p>
+      ) : data?.insights?.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+          {data.insights.map((insight, idx) => (
+            <InsightCard key={insight.id || idx} insight={insight} index={idx} />
+          ))}
+        </div>
+      ) : (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+          Keep tracking your expenses to unlock personalised insights.
+        </p>
+      )}
+    </Card>
+  );
+};
+
+export default AIInsightsPanel;

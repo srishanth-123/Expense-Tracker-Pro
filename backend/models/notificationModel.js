@@ -15,7 +15,10 @@ const notificationSchema = new mongoose.Schema(
                 "SPLIT_CREATED",
                 "SPLIT_SETTLED",
                 "BUDGET_WARNING",
-                "SYSTEM"
+                "SYSTEM",
+                "PRO_UPGRADE",
+                "WALLET_WITHDRAWAL",
+                "SPLIT_SETTLEMENT_RECEIVED"
             ],
             required: true,
         },

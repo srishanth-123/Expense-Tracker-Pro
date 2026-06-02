@@ -33,6 +33,8 @@
   --top-expense-hover: rgba(239, 68, 68, 0.08);
   --budget-track: rgba(255, 255, 255, 0.06);
   --greeting-gradient: linear-gradient(135deg, #f8fafc 0%, #94a3b8 100%);
+  --input-bg: rgba(15, 23, 42, 0.6);
+  --input-border: var(--surface-border);
 }
 
 [data-theme="light"] {
@@ -68,6 +70,8 @@
   --top-expense-hover: rgba(239, 68, 68, 0.1);
   --budget-track: rgba(0, 0, 0, 0.06);
   --greeting-gradient: linear-gradient(135deg, #0f172a 0%, #64748b 100%);
+  --input-bg: rgba(255, 255, 255, 0.8);
+  --input-border: var(--surface-border);
 }
 
 * {
@@ -115,8 +119,8 @@ body {
 /* Forms & Inputs */
 input, select, textarea {
   width: 100%;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text-primary);
   padding: 12px 16px;
   border-radius: var(--radius-sm);
@@ -125,8 +129,13 @@ input, select, textarea {
   transition: all 0.2s ease;
 }
 
+select option {
+  background-color: var(--bg-darker);
+  color: var(--text-primary);
+}
+
 [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--input-bg);
 }
 
 input:focus, select:focus, textarea:focus {
@@ -169,10 +178,11 @@ label {
 .btn-secondary {
   background: transparent;
   border: 1px solid var(--surface-border);
+  color: var(--text-primary);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--divider-color);
 }
 
 .btn-danger {

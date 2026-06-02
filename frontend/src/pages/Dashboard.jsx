@@ -138,12 +138,24 @@ const Dashboard = () => {
 
   useEffect(() => { fetchAll(); }, []);
 
+  useEffect(() => {
+    const handleUpdate = () => {
+      fetchAll();
+    };
+    window.addEventListener('financialDataUpdated', handleUpdate);
+    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
+  }, []);
+
   const s = data.summary;
   const totalIncome  = s?.totalIncome  ?? s?.income  ?? 0;
   const totalExpense = s?.totalExpense ?? s?.expense ?? 0;
   const net          = totalIncome - totalExpense;
   const savingsRate  = totalIncome > 0 ? Math.round((net / totalIncome) * 100) : 0;
   const budgetUsed   = totalIncome > 0 ? Math.min(Math.round((totalExpense / totalIncome) * 100), 100) : 0;
+  
+  // Use backend transaction counts if available, otherwise calculate from transactions array
+  const incomeTxnCount = s?.incomeCount ?? data.transactions.filter(t => t.type === 'income').length;
+  const expenseTxnCount = s?.expenseCount ?? data.transactions.filter(t => t.type === 'expense').length;
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -181,7 +193,7 @@ const Dashboard = () => {
       <div className="dash-header">
         <div>
           <h1 className="dash-greeting">{greeting()}, {user?.name?.split(' ')[0] || 'there'} 👋</h1>
-          <p className="dash-subtitle">Here's your financial overview for this month</p>
+          <p className="dash-subtitle">Here's your overall financial overview</p>
         </div>
         <button
           className={`dash-refresh-btn ${refreshing ? 'spinning' : ''}`}
@@ -199,7 +211,7 @@ const Dashboard = () => {
           icon={<TrendingUp size={22} />}
           label="Total Income"
           value={totalIncome}
-          sub={`${s?.transactionCount ?? 0} transactions`}
+          sub={`${incomeTxnCount} transactions`}
           color="#10b981"
         />
         <StatCard
@@ -281,7 +293,7 @@ const Dashboard = () => {
           </div>
           <div className="dash-insights-list">
             {data.insights.length === 0 ? (
-              <div className="dash-empty">Add more transactions to get insights.</div>
+              <div className="dash-empty">No insights available at this time.</div>
             ) : (
               data.insights.slice(0, 4).map((ins, i) => (
                 <InsightCard key={i} insight={typeof ins === 'string' ? ins : ins.message || ins.insight} index={i} />

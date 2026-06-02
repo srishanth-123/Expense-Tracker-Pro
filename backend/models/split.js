@@ -18,21 +18,44 @@ const splitSchema = new mongoose.Schema({
         user: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "User",
-            required: true
+            default: null
+        },
+        email: {
+            type: String,
+            lowercase: true,
+            trim: true
+        },
+        name: {
+            type: String,
+            trim: true
         },
         share: {
             type: Number,
             required: true
         },
+        percentage: {
+            type: Number,
+            default: 0
+        },
         paid: {
             type: Boolean,
             default: false
+        },
+        status: {
+            type: String,
+            enum: ["pending", "paid", "unregistered"],
+            default: "pending"
         }
     }],
     splitType: {
         type: String,
-        enum: ["equal", "custom"],
+        enum: ["equal", "custom", "percentage"],
         required: true
+    },
+    status: {
+        type: String,
+        enum: ["pending", "settled"],
+        default: "pending"
     }
 }, { timestamps: true });
 

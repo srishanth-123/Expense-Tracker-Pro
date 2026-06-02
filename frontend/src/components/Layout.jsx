@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
+import ChatbotWidget from './ChatbotWidget';
 
 const Layout = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -54,6 +55,8 @@ const Layout = () => {
           </AnimatePresence>
         </main>
       </div>
+
+      <ChatbotWidget />
     </div>
   );
 };

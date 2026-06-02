@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { addBalance, getBalance, getHistory } = require("../controllers/walletController");
+const { addBalance, getBalance, getHistory, withdrawFunds } = require("../controllers/walletController");
 const authMiddleware = require("../middleware/authMiddleware");
 const { walletLimiter } = require("../middleware/rateLimitMiddleware");
 
@@ -8,6 +8,7 @@ const { walletLimiter } = require("../middleware/rateLimitMiddleware");
 router.use(authMiddleware);
 
 router.post("/add", walletLimiter, addBalance);
+router.post("/withdraw", walletLimiter, withdrawFunds);
 router.get("/balance", getBalance);
 router.get("/history", getHistory);
 

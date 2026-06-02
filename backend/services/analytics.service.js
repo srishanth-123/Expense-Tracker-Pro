@@ -13,7 +13,7 @@ exports.getTopExpenses = async (userId, limit = 5) => {
     // Thus comparator(child, parent) = parent.amount - child.amount.
     // Let's just do a simpler approach: fetch all and then use a MaxHeap to extract top K.
     // Or just a standard sort if it's not too huge, but the requirement specifically asks for "heap".
-    
+
     const expenses = await Transaction.find({
         user: userId,
         type: "expense",
@@ -36,7 +36,7 @@ exports.getTopExpenses = async (userId, limit = 5) => {
         result.push({
             amount: exp.amount,
             description: exp.description,
-            category: exp.category ? exp.category.name : "Uncategorized",
+            category: exp.category ? { name: exp.category.name } : null,
             date: exp.date
         });
     }
@@ -45,12 +45,16 @@ exports.getTopExpenses = async (userId, limit = 5) => {
 };
 
 exports.getCategoryTrend = async (userId) => {
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1); // Last 6 months including current
+
     const data = await Transaction.aggregate([
         {
             $match: {
                 user: userId,
                 type: "expense",
-                isDeleted: false
+                isDeleted: false,
+                date: { $gte: sixMonthsAgo }
             }
         },
         {
@@ -80,13 +84,18 @@ exports.getCategoryTrend = async (userId) => {
     // Format into chart-ready data
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     
-    const labelsSet = new Set();
+    // Generate all month labels for the last 6 months
+    const labels = [];
     const datasetsMap = new Map(); // key: category name, value: map of label -> total
+
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+        labels.push(label);
+    }
 
     data.forEach(item => {
         const label = `${monthNames[item._id.month - 1]} ${item._id.year}`;
-        labelsSet.add(label);
-
         const catName = item.categoryDoc ? item.categoryDoc.name : "Uncategorized";
         if (!datasetsMap.has(catName)) {
             datasetsMap.set(catName, new Map());
@@ -94,7 +103,6 @@ exports.getCategoryTrend = async (userId) => {
         datasetsMap.get(catName).set(label, item.total);
     });
 
-    const labels = Array.from(labelsSet);
     const datasets = [];
 
     for (let [catName, labelMap] of datasetsMap.entries()) {
@@ -116,6 +124,17 @@ exports.getSmartInsights = async (userId) => {
     const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0); 
     // 0th day of current month is last day of previous month
+
+    // Check if user has any transactions at all
+    const hasAnyTransactions = await Transaction.findOne({
+        user: userId,
+        type: "expense",
+        isDeleted: false
+    });
+
+    if (!hasAnyTransactions) {
+        return { insights: ["Start tracking your expenses to get personalized insights!"], currentTotal: 0, prevTotal: 0 };
+    }
 
     const currentData = await Transaction.aggregate([
         { 
@@ -144,9 +163,11 @@ exports.getSmartInsights = async (userId) => {
     const currentTotal = currentData.length > 0 ? currentData[0].total : 0;
     const prevTotal = prevData.length > 0 ? prevData[0].total : 0;
 
-    let insight = "Not enough data to generate insights for this month.";
+    let insight;
 
-    if (prevTotal === 0 && currentTotal > 0) {
+    if (currentTotal === 0 && prevTotal === 0) {
+        insight = "Add some expenses this month to see spending comparisons.";
+    } else if (prevTotal === 0 && currentTotal > 0) {
         insight = `You started tracking! You've spent ₹${currentTotal} so far this month.`;
     } else if (prevTotal > 0) {
         const diff = currentTotal - prevTotal;
@@ -161,31 +182,50 @@ exports.getSmartInsights = async (userId) => {
         }
     }
 
-    return { insight, currentTotal, prevTotal };
+    return { insights: [insight], currentTotal, prevTotal };
 };
 
 exports.getDailyHeatmap = async (userId) => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
     const data = await Transaction.aggregate([
         {
             $match: {
                 user: userId,
                 type: "expense",
-                isDeleted: false
+                isDeleted: false,
+                date: { $gte: thirtyDaysAgo }
             }
         },
         {
             $group: {
                 _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
-                amount: { $sum: "$amount" }
+                total: { $sum: "$amount" }
             }
         },
         { $sort: { "_id": 1 } }
     ]);
 
-    return data.map(item => ({
-        date: item._id,
-        amount: item.amount
-    }));
+    // Create a map of date -> total from the aggregation result
+    const dataMap = new Map();
+    data.forEach(item => {
+        dataMap.set(item._id, item.total);
+    });
+
+    // Generate all 30 days labels
+    const result = [];
+    for (let i = 29; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0]; // YYYY-MM-DD format
+        result.push({
+            _id: dateStr,
+            total: dataMap.get(dateStr) || 0
+        });
+    }
+
+    return result;
 };
 
 exports.getSpendingPrediction = async (userId) => {
@@ -217,6 +257,28 @@ exports.getSpendingPrediction = async (userId) => {
     if (data.length > 0) {
         const sum = data.reduce((acc, curr) => acc + curr.total, 0);
         predictedExpense = sum / data.length; // average
+    } else {
+        // Fallback: use current month's spending if no historical data
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const currentMonthData = await Transaction.aggregate([
+            { 
+                $match: { 
+                    user: userId, 
+                    type: "expense", 
+                    isDeleted: false, 
+                    date: { $gte: currentMonthStart, $lte: now } 
+                } 
+            },
+            { 
+                $group: { 
+                    _id: null, 
+                    total: { $sum: "$amount" } 
+                } 
+            }
+        ]);
+        if (currentMonthData.length > 0) {
+            predictedExpense = currentMonthData[0].total;
+        }
     }
 
     return {

@@ -14,7 +14,7 @@ const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n ?? 0);
 
 const Splits = () => {
-  const { user } = useContext(AuthContext);
+  const { user, refreshUser } = useContext(AuthContext);
   const [splits, setSplits] = useState([]);
   const [loading, setLoading] = useState(true);
   
@@ -22,6 +22,7 @@ const Splits = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [settlingId, setSettlingId] = useState(null);
+  const [confirmSettle, setConfirmSettle] = useState({ isOpen: false, splitId: null, amount: 0 });
   
   // Form State
   const [description, setDescription] = useState('');
@@ -46,6 +47,14 @@ const Splits = () => {
 
   useEffect(() => {
     fetchSplits();
+  }, []);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      fetchSplits();
+    };
+    window.addEventListener('financialDataUpdated', handleUpdate);
+    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
   }, []);
 
   // Handle User Search
@@ -119,18 +128,48 @@ const Splits = () => {
     }
   };
 
-  const handleSettle = async (splitId) => {
+  const handleSettle = async (splitId, amount) => {
+    if (confirmSettle.isOpen) return;
+    console.log('handleSettle called with:', { splitId, amount });
+    setConfirmSettle({ isOpen: true, splitId, amount });
+  };
+
+  const confirmSettlement = async () => {
+    const { splitId, amount } = confirmSettle;
+    console.log('confirmSettlement called with splitId:', splitId, 'amount:', amount);
     const idempotencyKey = `settle_${splitId}_${Date.now()}`;
     setSettlingId(splitId);
+    setConfirmSettle({ isOpen: false, splitId: null, amount: 0 });
     try {
-      await api.post('/split/settle', 
+      console.log('Calling API to settle split...');
+      const response = await api.post('/split/settle', 
         { splitId }, 
         { headers: { 'x-idempotency-key': idempotencyKey } }
       );
-      toast.success('Split settled successfully via Wallet');
+      console.log('Settlement API response:', response);
+      
+      const receiverName = response?.receiverName || 'Friend';
+      const formattedAmount = fmt(amount);
+      
+      toast.success(`Successfully sent ${formattedAmount} to ${receiverName}`, { 
+        duration: 5000,
+        style: {
+          background: 'var(--success-bg)',
+          color: 'var(--success-text)',
+        }
+      });
+      refreshUser();
       fetchSplits();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Settlement failed. Check wallet balance.');
+      console.error('Settlement error:', err);
+      console.error('Error response:', err.response?.data);
+      toast.error(err.response?.data?.message || 'Settlement failed. Check wallet balance.', {
+        duration: 5000,
+        style: {
+          background: 'var(--error-bg)',
+          color: 'var(--error-text)',
+        }
+      });
     } finally {
       setSettlingId(null);
     }
@@ -162,10 +201,10 @@ const Splits = () => {
         <div className="sp-grid">
           {splits.map(split => {
             const isPaidByMe = split.paidBy._id === user._id;
-            const myParticipantInfo = split.participants.find(p => p.user._id === user._id);
+            const myParticipantInfo = split.participants.find(p => p.user && p.user._id === user._id);
             const myShare = myParticipantInfo ? myParticipantInfo.share : 0;
             const amISettled = myParticipantInfo ? myParticipantInfo.paid : false;
-            const allSettled = split.participants.every(p => p.paid);
+            const allSettled = split.participants.every(p => p.paid || p.status === 'unregistered');
 
             return (
               <Card key={split._id} hoverEffect padding="20px" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -186,9 +225,9 @@ const Splits = () => {
                     Paid by {isPaidByMe ? 'You' : split.paidBy.name}
                   </div>
                   {split.participants.map((p, idx) => (
-                    <div key={`${p.user._id}-${idx}`} className="sp-participant-row">
+                    <div key={p.user ? `${p.user._id}-${idx}` : `pending-${idx}`} className="sp-participant-row">
                       <span className="sp-participant-name">
-                        {p.user._id === user._id ? 'You' : p.user.name}
+                        {p.user ? (p.user._id === user._id ? 'You' : p.user.name) : p.name || p.email || 'Pending'}
                       </span>
                       <span className="sp-participant-share">{fmt(p.share)}</span>
                       <span className={`sp-participant-status ${p.paid ? 'settled' : 'pending'}`} style={{ color: p.paid ? '#10b981' : '#f59e0b' }}>
@@ -203,7 +242,7 @@ const Splits = () => {
                   <Button 
                     fullWidth 
                     style={{ marginTop: 'auto' }}
-                    onClick={() => handleSettle(split._id)}
+                    onClick={() => handleSettle(split._id, myShare)}
                     loading={settlingId === split._id}
                   >
                     Settle {fmt(myShare)}
@@ -226,7 +265,7 @@ const Splits = () => {
           <div className="modal-content">
             <div className="modal-header">
               <h2>Create New Split</h2>
-              <button className="close-btn" onClick={() => setIsModalOpen(false)}><X size={24} /></button>
+              <button className="close-btn" onClick={() => setIsModalOpen(false)} title="Cancel"><X size={24} /></button>
             </div>
 
             <form className="tx-form" onSubmit={handleCreateSplit}>
@@ -312,6 +351,44 @@ const Splits = () => {
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Settlement Confirmation Modal */}
+      {confirmSettle.isOpen && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setConfirmSettle({ isOpen: false, splitId: null, amount: 0 })}>
+          <div className="modal-content" style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h2>Confirm Settlement</h2>
+              <button className="close-btn" onClick={() => setConfirmSettle({ isOpen: false, splitId: null, amount: 0 })} title="Cancel">
+                <X size={24} />
+              </button>
+            </div>
+            <div style={{ padding: '20px 0' }}>
+              <p style={{ marginBottom: '16px' }}>
+                Are you sure you want to settle <strong>₹{fmt(confirmSettle.amount)}</strong> from your wallet?
+              </p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                This amount will be transferred to the person who paid the bill.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <Button 
+                variant="secondary" 
+                fullWidth 
+                onClick={() => setConfirmSettle({ isOpen: false, splitId: null, amount: 0 })}
+              >
+                Cancel
+              </Button>
+              <Button 
+                fullWidth 
+                onClick={confirmSettlement}
+                loading={settlingId === confirmSettle.splitId}
+              >
+                Confirm
+              </Button>
+            </div>
           </div>
         </div>
       )}

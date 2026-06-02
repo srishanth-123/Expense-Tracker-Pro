@@ -1,10 +1,13 @@
 const Transaction = require("../models/Transaction");
+const User = require("../models/user");
+const WalletTransaction = require("../models/WalletTransaction");
 const searchRegistry = require("../utils/trie");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const Budget = require("../models/budget");
 const Notification = require("../models/notificationModel");
 const { sendNotificationToUser } = require("../utils/socket");
+const budgetService = require("../services/budgetService");
 
 async function wipeTransactionDependentCaches(userId) {
     if (redis) {
@@ -27,7 +30,7 @@ async function wipeTransactionDependentCaches(userId) {
 
 exports.addTransaction=async(req,res)=>{
     try {
-        const {amount, type, category, description, date} = req.body;
+        const {amount, type, category, description, date, paymentMethod} = req.body;
         
         if (!amount || !type || !category) {
             return res.status(400).json({success: false, message: "Invalid request data"});
@@ -40,9 +43,33 @@ exports.addTransaction=async(req,res)=>{
         if (isNaN(amount) || amount <= 0) {
             return res.status(400).json({success: false, message: "Invalid request data"});
         }
+
+        const parsedAmount = parseFloat(amount);
+
+        // Handle wallet payment for expenses
+        if (type === 'expense' && paymentMethod === 'wallet') {
+            const user = await User.findById(req.user._id);
+            if (!user || user.walletBalance < parsedAmount) {
+                return res.status(400).json({success: false, message: "Insufficient wallet balance"});
+            }
+
+            // Deduct from wallet
+            await User.findByIdAndUpdate(req.user._id, { $inc: { walletBalance: -parsedAmount } });
+
+            // Create wallet transaction log
+            await WalletTransaction.create({
+                user: req.user._id,
+                type: 'debit',
+                amount: parsedAmount,
+                source: 'expense',
+                status: 'success',
+                referenceId: `EXP-${Date.now()}`,
+                description: description || 'Expense payment'
+            });
+        }
         
         const transaction=await Transaction.create({
-            amount: parseFloat(amount),
+            amount: parsedAmount,
             type,
             category,
             description: description || '',
@@ -63,67 +90,9 @@ exports.addTransaction=async(req,res)=>{
 
         await wipeTransactionDependentCaches(req.user._id);
 
-        // --- Budget Check & Notification Logic ---
+        // --- Budget tracking: recalc the affected category/month budget ---
         if (type === "expense") {
-            const txDate = date ? new Date(date) : new Date();
-            const currentMonth = txDate.getMonth() + 1;
-            const currentYear = txDate.getFullYear();
-
-            // Check if there is an active budget for this category and month
-            const budget = await Budget.findOne({
-                user: req.user._id,
-                category: category,
-                month: currentMonth,
-                year: currentYear,
-                isDeleted: false
-            });
-
-            if (budget) {
-                // Calculate total spent for this category this month
-                const spent = await Transaction.aggregate([
-                    {
-                        $match: {
-                            user: req.user._id,
-                            category: budget.category,
-                            type: "expense",
-                            date: {
-                                $gte: new Date(currentYear, currentMonth - 1, 1),
-                                $lte: new Date(currentYear, currentMonth, 0)
-                            },
-                            isDeleted: false
-                        }
-                    },
-                    {
-                        $group: {
-                            _id: null,
-                            total: { $sum: "$amount" }
-                        }
-                    }
-                ]);
-
-                const totalSpent = spent[0]?.total || 0;
-                
-                // If it just exceeded or is nearing the limit, we can notify
-                // For simplicity: notify if totalSpent > budget.limit 
-                // We'll notify if this exact transaction pushed it over the limit, to avoid spam
-                const previousSpent = totalSpent - parseFloat(amount);
-                
-                if (totalSpent > budget.limit && previousSpent <= budget.limit) {
-                    const notification = await Notification.create({
-                        user: req.user._id,
-                        type: "BUDGET_WARNING",
-                        message: `You've exceeded your ${budget.limit} INR budget for this category!`
-                    });
-                    sendNotificationToUser(req.user._id, notification);
-                } else if (totalSpent >= budget.limit * 0.9 && previousSpent < budget.limit * 0.9) {
-                    const notification = await Notification.create({
-                        user: req.user._id,
-                        type: "BUDGET_WARNING",
-                        message: `You've reached 90% of your budget for this category!`
-                    });
-                    sendNotificationToUser(req.user._id, notification);
-                }
-            }
+            await budgetService.syncBudgetForTransaction(req.user._id, category, date ? new Date(date) : new Date());
         }
         // -----------------------------------------
 
@@ -142,16 +111,32 @@ exports.getTransactions=async(req,res)=>{
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
-                if (cached) return res.json({success: true, message: "Transactions retrieved", data: JSON.parse(cached)});
+                if (cached) {
+                    let data;
+                    if (typeof cached === "string") {
+                        data = JSON.parse(cached);
+                    } else if (typeof cached === "object") {
+                        data = cached;
+                    } else {
+                        console.warn("Redis cache invalid type:", typeof cached);
+                        await redis.del(cacheKey);
+                    }
+                    if (data) return res.json({success: true, message: "Transactions retrieved", data: data});
+                }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);
+                try {
+                    await redis.del(cacheKey);
+                } catch (delErr) {
+                    console.warn("Failed to clear cache:", delErr.message);
+                }
             }
         }
 
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
-        const {type, category, startDate, endDate, sortBy, sortOrder} = req.query;
+        const {type, category, startDate, endDate, sortBy, sortOrder, search} = req.query;
         
         let filter = {user: req.user._id, isDeleted: false};
         
@@ -161,6 +146,16 @@ exports.getTransactions=async(req,res)=>{
             filter.date = {};
             if (startDate) filter.date.$gte = new Date(startDate);
             if (endDate) filter.date.$lte = new Date(endDate);
+        }
+        
+        // Search across description, amount, type
+        if (search && search.trim()) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            filter.$or = [
+                { description: searchRegex },
+                { amount: isNaN(search) ? undefined : parseFloat(search) },
+                { type: searchRegex }
+            ].filter(Boolean);
         }
         
         let sort = {date: -1};
@@ -178,12 +173,10 @@ exports.getTransactions=async(req,res)=>{
         
         const result = {
             transactions,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit)
-            }
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit)
         };
 
         if (redis) {
@@ -207,6 +200,9 @@ exports.updateTransaction=async(req,res)=>{
         
         const transaction = await Transaction.findById(req.params.id);
         const oldDescription = transaction ? transaction.description : null;
+        const oldCategory = transaction ? transaction.category : null;
+        const oldDate = transaction ? transaction.date : null;
+        const oldType = transaction ? transaction.type : null;
 
         
         if (!transaction || transaction.isDeleted) {
@@ -255,6 +251,18 @@ exports.updateTransaction=async(req,res)=>{
         
         await wipeTransactionDependentCaches(req.user._id);
 
+        // --- Budget tracking: recalc both old and new category/month buckets ---
+        if (oldType === "expense" || updatedTransaction.type === "expense") {
+            await budgetService.syncBudgetsForTransactionChange(
+                req.user._id,
+                oldCategory,
+                oldDate,
+                updatedTransaction.category?._id || updatedTransaction.category,
+                updatedTransaction.date
+            );
+        }
+        // -----------------------------------------
+
         res.json({success: true, message: "Transaction updated", data: updatedTransaction});
     } catch (error) {
         console.error('Update transaction error:', error);
@@ -282,6 +290,12 @@ exports.deleteTransaction=async(req,res)=>{
         }
 
         await wipeTransactionDependentCaches(req.user._id);
+
+        // --- Budget tracking: recalc the affected category/month budget ---
+        if (transaction.type === "expense") {
+            await budgetService.syncBudgetForTransaction(req.user._id, transaction.category, transaction.date);
+        }
+        // -----------------------------------------
 
         res.json({success: true, message:"Transaction deleted successfully"});
     } catch (error) {
@@ -337,6 +351,12 @@ exports.restoreTransaction = async(req, res) => {
         }
 
         await wipeTransactionDependentCaches(req.user._id);
+
+        // --- Budget tracking: recalc the affected category/month budget ---
+        if (transaction.type === "expense") {
+            await budgetService.syncBudgetForTransaction(req.user._id, transaction.category, transaction.date);
+        }
+        // -----------------------------------------
 
         res.json({success: true, message: "Transaction restored successfully"});
     } catch (error) {
