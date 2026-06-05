@@ -21,9 +21,9 @@ const Budget = require("../models/budget");
 const Category = require("../models/category");
 const User = require("../models/user");
 const redis = require("../config/redis");
-const searchRegistry = require("../utils/trie");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const budgetService = require("../services/budgetService");
+const { normalizeCategoryName } = require("./categoryNormalizer");
 const analyticsService = require("../services/analytics.service");
 const logger = require("./logger");
 
@@ -55,7 +55,7 @@ function escapeRegex(str) {
 async function wipeTransactionCaches(userId) {
     if (!redis) return;
     try {
-        const analyticsKeys = await redis.keys(`analytics:*:${userId}`);
+        const analyticsKeys = await redis.keys(`analytics:*:${userId}*`);
         const transactionKeys = await redis.keys(`transactions:${userId}:*`);
         const budgetKeys = await redis.keys(`checkBudgets:${userId}:*`);
         const searchKeys = await redis.keys(`search:${userId}:*`);
@@ -121,12 +121,6 @@ async function executeCreateTransaction(userId, fields) {
 
         // Side effects — identical to transactionController
         if (description || transaction.description) {
-            const desc = description || transaction.description;
-            searchRegistry.getTrie(userId).insert(desc, {
-                id: transaction._id,
-                text: desc,
-                type: "transaction"
-            });
             invalidateUserSearchCache(userId);
         }
 
@@ -217,7 +211,6 @@ async function executeDeleteTransaction(userId, transactionId) {
         await transaction.save();
         
         if (transaction.description) {
-            searchRegistry.getTrie(userId).remove(transaction.description, transaction._id);
             invalidateUserSearchCache(userId);
         }
         
@@ -281,17 +274,6 @@ async function executeUpdateTransaction(userId, transactionId, updates) {
         
         const newDesc = updates.newDescription || updated.description;
         if (newDesc !== undefined && newDesc !== oldDescription) {
-            const trie = searchRegistry.getTrie(userId);
-            if (oldDescription) {
-                trie.remove(oldDescription, transaction._id);
-            }
-            if (newDesc) {
-                trie.insert(newDesc, {
-                    id: transaction._id,
-                    text: newDesc,
-                    type: "transaction"
-                });
-            }
             invalidateUserSearchCache(userId);
         }
         
@@ -509,7 +491,7 @@ async function executeCreateCategory(userId, fields) {
             return { success: false, message: "Category name is required." };
         }
 
-        const normalizedName = categoryNewName.trim();
+        const normalizedName = normalizeCategoryName(categoryNewName);
         const existing = await resolveCategory(userId, normalizedName);
         if (existing) {
             return { success: false, message: `Category "${normalizedName}" already exists.` };
@@ -518,13 +500,6 @@ async function executeCreateCategory(userId, fields) {
         const category = await Category.create({
             name: normalizedName,
             user: userId
-        });
-
-        // Insert into Search Registry Trie
-        searchRegistry.getTrie(userId).insert(normalizedName, {
-            id: category._id,
-            text: normalizedName,
-            type: "category"
         });
 
         invalidateUserSearchCache(userId);
@@ -580,7 +555,6 @@ async function executeDeleteCategory(userId, categoryId) {
             return { success: false, message: "Category not found." };
         }
         
-        searchRegistry.getTrie(userId).remove(category.name, category._id);
         invalidateUserSearchCache(userId);
         
         if (redis) {
@@ -617,14 +591,6 @@ async function executeUpdateCategory(userId, categoryId, newName) {
         const oldName = category.name;
         category.name = newName;
         await category.save();
-        
-        const trie = searchRegistry.getTrie(userId);
-        trie.remove(oldName, category._id);
-        trie.insert(newName, {
-            id: category._id,
-            text: newName,
-            type: "category"
-        });
         
         invalidateUserSearchCache(userId);
         

@@ -1,8 +1,9 @@
 import { useState, useEffect, useContext } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { 
   Search, Plus, ArrowUpRight, ArrowDownRight, 
-  Trash2, Edit2, RotateCcw, X, Inbox
+  Trash2, Edit2, RotateCcw, X, Inbox, Calendar, FolderEdit
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { AuthContext } from '../context/AuthContext';
@@ -11,6 +12,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
 import ConfirmModal from '../components/ui/ConfirmModal';
+import CategoryManagerModal from '../components/CategoryManagerModal';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import './Transactions.css';
@@ -23,36 +25,91 @@ const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN', {
   year: 'numeric', month: 'short', day: 'numeric'
 });
 
+const getLocalDateString = (d) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getDateRange = (filterType, customStartDate = '', customEndDate = '') => {
+  const now = new Date();
+  let startDate = null;
+  let endDate = null;
+
+  if (filterType === 'thisMonth') {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    startDate = getLocalDateString(new Date(y, m, 1));
+    endDate = getLocalDateString(new Date(y, m + 1, 0));
+  } else if (filterType === 'lastMonth') {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    startDate = getLocalDateString(new Date(y, m - 1, 1));
+    endDate = getLocalDateString(new Date(y, m, 0));
+  } else if (filterType === 'last3Months') {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    startDate = getLocalDateString(new Date(y, m - 2, 1));
+    endDate = getLocalDateString(new Date(y, m + 1, 0));
+  } else if (filterType === 'thisFY') {
+    const currentMonth = now.getMonth();
+    const startYear = currentMonth >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    startDate = `${startYear}-04-01`;
+    endDate = `${startYear + 1}-03-31`;
+  } else if (filterType === 'custom') {
+    startDate = customStartDate;
+    endDate = customEndDate;
+  }
+
+  return { startDate, endDate };
+};
+
 // ── Main Component ────────────────────────────────────────────────────────────
 const Transactions = () => {
   const { user, refreshUser } = useContext(AuthContext);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   // ── State ──
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // Pagination & Filters
-  const [page, setPage] = useState(1);
+  // Pagination & Filters (Initialized from URL if present)
+  const [page, setPage] = useState(parseInt(searchParams.get('page')) || 1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
-  const [filters, setFilters] = useState({
-    type: '',
-    category: '',
-    search: searchParams.get('search') || '',
+  
+  const [filters, setFilters] = useState(() => {
+    const now = new Date();
+    const defaultStartDate = getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+    const defaultEndDate = getLocalDateString(now);
+    return {
+      type: searchParams.get('type') || '',
+      category: searchParams.get('category') || '',
+      search: searchParams.get('search') || '',
+      dateRangeType: searchParams.get('dateRangeType') || 'all',
+      customStartDate: searchParams.get('customStartDate') || defaultStartDate,
+      customEndDate: searchParams.get('customEndDate') || defaultEndDate,
+    };
   });
+
+  // Mini Analytics Summary
+  const [summary, setSummary] = useState({ totalIncome: 0, totalExpense: 0 });
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   // Modal Form State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  
   const [formData, setFormData] = useState({
     type: 'expense',
     amount: '',
     category: '',
     description: '',
     date: new Date().toISOString().split('T')[0],
-    paymentMethod: 'regular' // 'regular' or 'wallet'
+    paymentMethod: 'regular'
   });
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -61,10 +118,69 @@ const Transactions = () => {
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, id: null, isRestore: false });
   const [deleting, setDeleting] = useState(false);
 
-  // Category Form State
+  // Inline Category Form State
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
+
+  // Toggle Scroll Lock when Create/Edit modal is open
+  useEffect(() => {
+    if (isModalOpen) {
+      document.body.classList.add('modal-open');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+    };
+  }, [isModalOpen]);
+
+  // Sync filters to URL query params
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    if (filters.type) params.set('type', filters.type);
+    if (filters.category) params.set('category', filters.category);
+    if (filters.search) params.set('search', filters.search);
+    if (filters.dateRangeType) params.set('dateRangeType', filters.dateRangeType);
+    if (filters.dateRangeType === 'custom') {
+      if (filters.customStartDate) params.set('customStartDate', filters.customStartDate);
+      if (filters.customEndDate) params.set('customEndDate', filters.customEndDate);
+    }
+    setSearchParams(params);
+  }, [filters, page, setSearchParams]);
+
+  // Sync URL query params back to filters state when they change externally (e.g. from header search)
+  useEffect(() => {
+    const searchVal = searchParams.get('search') || '';
+    const typeVal = searchParams.get('type') || '';
+    const categoryVal = searchParams.get('category') || '';
+    const dateRangeTypeVal = searchParams.get('dateRangeType') || 'all';
+    const customStartVal = searchParams.get('customStartDate') || '';
+    const customEndVal = searchParams.get('customEndDate') || '';
+    const pageVal = parseInt(searchParams.get('page')) || 1;
+
+    if (
+      filters.search !== searchVal ||
+      filters.type !== typeVal ||
+      filters.category !== categoryVal ||
+      filters.dateRangeType !== dateRangeTypeVal ||
+      (dateRangeTypeVal === 'custom' && filters.customStartDate !== customStartVal && customStartVal) ||
+      (dateRangeTypeVal === 'custom' && filters.customEndDate !== customEndVal && customEndVal) ||
+      page !== pageVal
+    ) {
+      setFilters(prev => ({
+        ...prev,
+        search: searchVal,
+        type: typeVal,
+        category: categoryVal,
+        dateRangeType: dateRangeTypeVal,
+        customStartDate: dateRangeTypeVal === 'custom' && customStartVal ? customStartVal : prev.customStartDate,
+        customEndDate: dateRangeTypeVal === 'custom' && customEndVal ? customEndVal : prev.customEndDate,
+      }));
+      setPage(pageVal);
+    }
+  }, [searchParams, filters, page]);
 
   // ── Fetch Data ──
   const fetchTransactions = async () => {
@@ -74,6 +190,10 @@ const Transactions = () => {
       if (filters.type) params.append('type', filters.type);
       if (filters.category) params.append('category', filters.category);
       if (filters.search) params.append('search', filters.search);
+      
+      const { startDate, endDate } = getDateRange(filters.dateRangeType, filters.customStartDate, filters.customEndDate);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
       
       const res = await api.get(`/transactions?${params.toString()}`);
       
@@ -100,22 +220,40 @@ const Transactions = () => {
     }
   };
 
+  const fetchSummary = async () => {
+    try {
+      setSummaryLoading(true);
+      const { startDate, endDate } = getDateRange(filters.dateRangeType, filters.customStartDate, filters.customEndDate);
+      const params = new URLSearchParams();
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      if (filters.type) params.append('type', filters.type);
+      if (filters.category) params.append('category', filters.category);
+      if (filters.search) params.append('search', filters.search);
+      
+      const res = await api.get(`/analytics/summary?${params.toString()}`);
+      setSummary(res || { totalIncome: 0, totalExpense: 0 });
+    } catch (err) {
+      console.error('Failed to fetch summary:', err);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchCategories();
   }, []);
 
   useEffect(() => {
-    setFilters(prev => ({ ...prev, search: searchParams.get('search') || '' }));
-  }, [searchParams]);
-
-  useEffect(() => {
     fetchTransactions();
-  }, [page, filters.type, filters.category, filters.search]);
+    fetchSummary();
+  }, [page, filters.type, filters.category, filters.search, filters.dateRangeType, filters.customStartDate, filters.customEndDate]);
 
   useEffect(() => {
     const handleUpdate = () => {
       fetchTransactions();
       fetchCategories();
+      fetchSummary();
     };
     window.addEventListener('financialDataUpdated', handleUpdate);
     return () => window.removeEventListener('financialDataUpdated', handleUpdate);
@@ -128,8 +266,16 @@ const Transactions = () => {
     setPage(1);
   };
 
+  const handleDateRangeTypeChange = (e) => {
+    const value = e.target.value;
+    setFilters(prev => ({ ...prev, dateRangeType: value }));
+    setPage(1);
+  };
+
   const openModal = (txn = null) => {
     setFormError('');
+    setIsAddingCategory(false);
+    setNewCategoryName('');
     if (txn) {
       setEditingId(txn._id);
       setFormData({
@@ -138,7 +284,7 @@ const Transactions = () => {
         category: txn.category?._id || txn.category,
         description: txn.description || '',
         date: new Date(txn.date || txn.createdAt).toISOString().split('T')[0],
-        paymentMethod: 'regular' // Default to regular for edits
+        paymentMethod: 'regular'
       });
     } else {
       setEditingId(null);
@@ -165,13 +311,13 @@ const Transactions = () => {
       } else {
         await api.post('/transactions', formData);
         toast.success('Transaction added');
-        // Refresh user data to update wallet balance if wallet was used
         if (formData.paymentMethod === 'wallet') {
           refreshUser();
         }
       }
       setIsModalOpen(false);
       fetchTransactions();
+      fetchSummary();
     } catch (err) {
       setFormError(err.response?.data?.message || 'Failed to save transaction');
     } finally {
@@ -190,6 +336,7 @@ const Transactions = () => {
         toast.success('Transaction deleted');
       }
       fetchTransactions();
+      fetchSummary();
     } catch (err) {
       toast.error('Action failed');
     } finally {
@@ -221,18 +368,45 @@ const Transactions = () => {
   return (
     <div className="transactions-page">
       {/* Header */}
-      <div className="tx-header">
+      <div className="tx-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <h1 className="tx-title">Transactions</h1>
-        <Button onClick={() => openModal()} icon={Plus}>
-          Add New
-        </Button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <Button variant="secondary" onClick={() => setIsCategoryManagerOpen(true)} icon={FolderEdit}>
+            Categories
+          </Button>
+          <Button onClick={() => openModal()} icon={Plus}>
+            Add New
+          </Button>
+        </div>
+      </div>
+
+      {/* Mini-Analytics Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+        <Card padding="20px" style={{ background: 'rgba(16, 185, 129, 0.04)', border: '1px solid rgba(16, 185, 129, 0.12)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Filtered Income</span>
+          <span style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--success)' }}>
+            {summaryLoading ? '...' : fmt(summary.totalIncome)}
+          </span>
+        </Card>
+        <Card padding="20px" style={{ background: 'rgba(239, 68, 68, 0.04)', border: '1px solid rgba(239, 68, 68, 0.12)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Filtered Expenses</span>
+          <span style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--danger)' }}>
+            {summaryLoading ? '...' : fmt(summary.totalExpense)}
+          </span>
+        </Card>
+        <Card padding="20px" style={{ background: 'rgba(99, 102, 241, 0.04)', border: '1px solid rgba(99, 102, 241, 0.12)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Net Savings</span>
+          <span style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--primary)' }}>
+            {summaryLoading ? '...' : fmt(summary.totalIncome - summary.totalExpense)}
+          </span>
+        </Card>
       </div>
 
       <Card padding="0" style={{ overflow: 'hidden' }}>
         
-        {/* Filters */}
-        <div className="tx-filters">
-          <div className="tx-search">
+        {/* Filters and Search toolbar */}
+        <div className="tx-filters" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '16px', borderBottom: '1px solid var(--surface-border)', alignItems: 'center' }}>
+          <div className="tx-search" style={{ flex: '1 1 240px' }}>
             <Search size={18} />
             <input 
               type="text" 
@@ -243,18 +417,60 @@ const Transactions = () => {
             />
           </div>
           
-          <select name="type" className="tx-select" value={filters.type} onChange={handleFilterChange}>
+          <select name="type" className="tx-select" value={filters.type} onChange={handleFilterChange} style={{ minWidth: '130px' }}>
             <option value="">All Types</option>
             <option value="income">Income</option>
             <option value="expense">Expense</option>
           </select>
 
-          <select name="category" className="tx-select" value={filters.category} onChange={handleFilterChange}>
+          <select name="category" className="tx-select" value={filters.category} onChange={handleFilterChange} style={{ minWidth: '160px' }}>
             <option value="">All Categories</option>
             {categories.map(c => (
               <option key={c._id} value={c._id}>{c.name}</option>
             ))}
           </select>
+
+          {/* Date Selector Dropdown */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '0 12px', height: '42px' }}>
+              <Calendar size={16} color="var(--text-secondary)" />
+              <select 
+                value={filters.dateRangeType} 
+                onChange={handleDateRangeTypeChange}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', height: '100%', fontSize: '0.9rem' }}
+              >
+                <option value="all">All Time</option>
+                <option value="thisMonth">This Month</option>
+                <option value="lastMonth">Last Month</option>
+                <option value="last3Months">Last 3 Months</option>
+                <option value="thisFY">This Financial Year (Apr-Mar)</option>
+                <option value="custom">Custom Range</option>
+              </select>
+            </div>
+
+            {/* Custom Date Range Picker Fields */}
+            {filters.dateRangeType === 'custom' && (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input 
+                  type="date" 
+                  name="customStartDate"
+                  className="tx-select"
+                  value={filters.customStartDate} 
+                  onChange={handleFilterChange}
+                  style={{ height: '42px', padding: '0 12px', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none' }}
+                />
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>to</span>
+                <input 
+                  type="date" 
+                  name="customEndDate"
+                  className="tx-select"
+                  value={filters.customEndDate} 
+                  onChange={handleFilterChange}
+                  style={{ height: '42px', padding: '0 12px', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none' }}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Data Grid */}
@@ -360,8 +576,8 @@ const Transactions = () => {
         <div style={{ height: '16px' }} />
       </Card>
 
-      {/* ── Add/Edit Modal ── */}
-      {isModalOpen && (
+      {/* ── Add/Edit Modal (Rendered via React Portal under document.body) ── */}
+      {isModalOpen && createPortal(
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setIsModalOpen(false)}>
           <div className="modal-content">
             <div className="modal-header">
@@ -428,6 +644,12 @@ const Transactions = () => {
                       placeholder="e.g. Groceries"
                       value={newCategoryName}
                       onChange={e => setNewCategoryName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCategory();
+                        }
+                      }}
                       style={{ flex: 1 }}
                     />
                     <Button 
@@ -512,8 +734,19 @@ const Transactions = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
+
+      {/* Standalone Category Manager Modal */}
+      <CategoryManagerModal 
+        isOpen={isCategoryManagerOpen} 
+        onClose={() => setIsCategoryManagerOpen(false)}
+        onCategoriesUpdated={() => {
+          fetchCategories();
+          fetchTransactions();
+        }}
+      />
 
       {/* Confirmation Modal */}
       <ConfirmModal 

@@ -1,7 +1,6 @@
 const Transaction = require("../models/Transaction");
 const User = require("../models/user");
 const WalletTransaction = require("../models/WalletTransaction");
-const searchRegistry = require("../utils/trie");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const Budget = require("../models/budget");
@@ -12,7 +11,7 @@ const budgetService = require("../services/budgetService");
 async function wipeTransactionDependentCaches(userId) {
     if (redis) {
         try {
-            const analyticsKeys = await redis.keys(`analytics:*:${userId}`);
+            const analyticsKeys = await redis.keys(`analytics:*:${userId}*`);
             const transactionKeys = await redis.keys(`transactions:${userId}:*`);
             const budgetKeys = await redis.keys(`checkBudgets:${userId}:*`);
             const searchKeys = await redis.keys(`search:${userId}:*`);
@@ -80,11 +79,6 @@ exports.addTransaction=async(req,res)=>{
         const populatedTransaction = await Transaction.findById(transaction._id).populate("category");
         
         if (description) {
-            searchRegistry.getTrie(req.user._id).insert(description, {
-                id: transaction._id,
-                text: description,
-                type: 'transaction'
-            });
             invalidateUserSearchCache(req.user._id);
         }
 
@@ -95,6 +89,17 @@ exports.addTransaction=async(req,res)=>{
             await budgetService.syncBudgetForTransaction(req.user._id, category, date ? new Date(date) : new Date());
         }
         // -----------------------------------------
+
+        // --- Notification ---
+        try {
+            const catName = populatedTransaction.category?.name || 'Uncategorized';
+            const notif = await Notification.create({
+                user: req.user._id,
+                type: "TRANSACTION_CREATED",
+                message: `New ${type}: ₹${parsedAmount} in ${catName}${description ? ' — ' + description : ''}`
+            });
+            sendNotificationToUser(req.user._id, notif);
+        } catch (_) {}
 
         res.status(201).json({success: true, message: "Transaction created", data: populatedTransaction});
     } catch (error) {
@@ -235,17 +240,6 @@ exports.updateTransaction=async(req,res)=>{
         ).populate("category");
         
         if (description !== undefined && description !== oldDescription) {
-            const trie = searchRegistry.getTrie(req.user._id);
-            if (oldDescription) {
-                trie.remove(oldDescription, transaction._id);
-            }
-            if (description) {
-                trie.insert(description, {
-                    id: transaction._id,
-                    text: description,
-                    type: 'transaction'
-                });
-            }
             invalidateUserSearchCache(req.user._id);
         }
         
@@ -262,6 +256,17 @@ exports.updateTransaction=async(req,res)=>{
             );
         }
         // -----------------------------------------
+
+        // --- Notification ---
+        try {
+            const catName = updatedTransaction.category?.name || 'Uncategorized';
+            const notif = await Notification.create({
+                user: req.user._id,
+                type: "TRANSACTION_UPDATED",
+                message: `Updated ${updatedTransaction.type}: ₹${updatedTransaction.amount} in ${catName}`
+            });
+            sendNotificationToUser(req.user._id, notif);
+        } catch (_) {}
 
         res.json({success: true, message: "Transaction updated", data: updatedTransaction});
     } catch (error) {
@@ -285,7 +290,6 @@ exports.deleteTransaction=async(req,res)=>{
         await Transaction.findByIdAndUpdate(req.params.id, { isDeleted: true, deletedAt: new Date() });
         
         if (transaction.description) {
-            searchRegistry.getTrie(req.user._id).remove(transaction.description, transaction._id);
             invalidateUserSearchCache(req.user._id);
         }
 
@@ -296,6 +300,16 @@ exports.deleteTransaction=async(req,res)=>{
             await budgetService.syncBudgetForTransaction(req.user._id, transaction.category, transaction.date);
         }
         // -----------------------------------------
+
+        // --- Notification ---
+        try {
+            const notif = await Notification.create({
+                user: req.user._id,
+                type: "TRANSACTION_DELETED",
+                message: `Deleted ${transaction.type}: ₹${transaction.amount}${transaction.description ? ' — ' + transaction.description : ''}`
+            });
+            sendNotificationToUser(req.user._id, notif);
+        } catch (_) {}
 
         res.json({success: true, message:"Transaction deleted successfully"});
     } catch (error) {
@@ -342,11 +356,6 @@ exports.restoreTransaction = async(req, res) => {
         await Transaction.findByIdAndUpdate(req.params.id, { isDeleted: false, deletedAt: null });
         
         if (transaction.description) {
-            searchRegistry.getTrie(req.user._id).insert(transaction.description, {
-                id: transaction._id,
-                text: transaction.description,
-                type: 'transaction'
-            });
             invalidateUserSearchCache(req.user._id);
         }
 
@@ -357,6 +366,16 @@ exports.restoreTransaction = async(req, res) => {
             await budgetService.syncBudgetForTransaction(req.user._id, transaction.category, transaction.date);
         }
         // -----------------------------------------
+
+        // --- Notification ---
+        try {
+            const notif = await Notification.create({
+                user: req.user._id,
+                type: "TRANSACTION_RESTORED",
+                message: `Restored ${transaction.type}: ₹${transaction.amount}${transaction.description ? ' — ' + transaction.description : ''}`
+            });
+            sendNotificationToUser(req.user._id, notif);
+        } catch (_) {}
 
         res.json({success: true, message: "Transaction restored successfully"});
     } catch (error) {

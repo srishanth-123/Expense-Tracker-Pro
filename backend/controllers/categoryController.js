@@ -1,34 +1,72 @@
 const Category=require("../models/category");
-const searchRegistry = require("../utils/trie");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
+const { normalizeCategoryName } = require("../utils/categoryNormalizer");
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 exports.createCategory=async(req,res)=>{
-    const {name}=req.body;
-    const category=await Category.create({
-        name,
-        user:req.user._id
-    });
-
-    searchRegistry.getTrie(req.user._id).insert(name, {
-        id: category._id,
-        text: name,
-        type: 'category'
-    });
-
-    invalidateUserSearchCache(req.user._id);
-
-    if (redis) {
-        try {
-            await redis.del(`categories:${req.user._id}`);
-            const searchKeys = await redis.keys(`search:${req.user._id}:*`);
-            if (searchKeys.length > 0) await redis.del(...searchKeys);
-        } catch (err) {
-            console.warn("Redis invalidation error:", err.message);
+    try {
+        const {name}=req.body;
+        if (!name || typeof name !== "string" || !name.trim()) {
+            return res.status(400).json({success: false, message: "Category name is required"});
         }
-    }
+        
+        const normalizedName = normalizeCategoryName(name);
 
-    res.json({success: true, message: "Success", data: category});
+        // Check if exists
+        let existingCategory = await Category.findOne({
+            user: req.user._id,
+            name: { $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") }
+        });
+
+        if (existingCategory) {
+            if (existingCategory.isDeleted) {
+                // Restore deleted category
+                existingCategory.isDeleted = false;
+                existingCategory.deletedAt = null;
+                existingCategory.name = normalizedName;
+                await existingCategory.save();
+
+                invalidateUserSearchCache(req.user._id);
+
+                if (redis) {
+                    try {
+                        await redis.del(`categories:${req.user._id}`);
+                        const searchKeys = await redis.keys(`search:${req.user._id}:*`);
+                        if (searchKeys.length > 0) await redis.del(...searchKeys);
+                    } catch (err) {
+                        console.warn("Redis invalidation error:", err.message);
+                    }
+                }
+                return res.json({success: true, message: "Category created", data: existingCategory});
+            } else {
+                return res.status(400).json({success: false, message: "Category already exists"});
+            }
+        }
+
+        const category=await Category.create({
+            name: normalizedName,
+            user:req.user._id
+        });
+
+        invalidateUserSearchCache(req.user._id);
+
+        if (redis) {
+            try {
+                await redis.del(`categories:${req.user._id}`);
+                const searchKeys = await redis.keys(`search:${req.user._id}:*`);
+                if (searchKeys.length > 0) await redis.del(...searchKeys);
+            } catch (err) {
+                console.warn("Redis invalidation error:", err.message);
+            }
+        }
+
+        res.json({success: true, message: "Category created", data: category});
+    } catch (error) {
+        console.error("Create category error:", error);
+        res.status(500).json({success: false, message: "Server error"});
+    }
 };
 
 exports.getCategories = async (req, res) => {
@@ -89,8 +127,6 @@ exports.deleteCategory = async (req, res) => {
       return res.status(404).json({success: false, message: "Resource not found"});
     }
 
-    searchRegistry.getTrie(req.user.id).remove(category.name, category._id);
-
     invalidateUserSearchCache(req.user.id);
 
     if (redis) {
@@ -128,12 +164,6 @@ exports.restoreCategory = async (req, res) => {
     category.deletedAt = null;
     await category.save();
 
-    searchRegistry.getTrie(req.user.id).insert(category.name, {
-      id: category._id,
-      text: category.name,
-      type: 'category'
-    });
-
     invalidateUserSearchCache(req.user.id);
 
     if (redis) {
@@ -149,5 +179,54 @@ exports.restoreCategory = async (req, res) => {
     res.json({success: true, message: "Category restored successfully" });
   } catch (error) {
     res.status(500).json({success: false, message: "Server error"});
+  }
+};
+
+exports.updateCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ success: false, message: "Category name is required" });
+    }
+
+    const normalizedName = normalizeCategoryName(name);
+
+    // Check if another category with this name already exists
+    const duplicateCategory = await Category.findOne({
+      user: req.user._id,
+      _id: { $ne: req.params.id },
+      name: { $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") },
+      isDeleted: false
+    });
+
+    if (duplicateCategory) {
+      return res.status(400).json({ success: false, message: "Another category with this name already exists" });
+    }
+
+    const category = await Category.findOne({ _id: req.params.id, user: req.user._id, isDeleted: false });
+    if (!category) {
+      return res.status(404).json({ success: false, message: "Category not found" });
+    }
+
+    const oldName = category.name;
+    category.name = normalizedName;
+    await category.save();
+
+    invalidateUserSearchCache(req.user._id);
+
+    if (redis) {
+      try {
+        await redis.del(`categories:${req.user._id}`);
+        const searchKeys = await redis.keys(`search:${req.user._id}:*`);
+        if (searchKeys.length > 0) await redis.del(...searchKeys);
+      } catch (err) {
+        console.warn("Redis invalidation error:", err.message);
+      }
+    }
+
+    res.json({ success: true, message: "Category updated successfully", data: category });
+  } catch (error) {
+    console.error("Update category error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };

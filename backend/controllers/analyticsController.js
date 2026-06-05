@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Transaction = require("../models/Transaction");
 const redis = require("../config/redis");
 const analyticsService = require("../services/analytics.service");
@@ -5,7 +6,8 @@ const aiInsightsService = require("../services/aiInsightsService");
 
 exports.allTimeSummary = async (req, res) => {
     try {
-        const cacheKey = `analytics:allTimeSummary:${req.user._id}`;
+        const { startDate, endDate, type, category, search } = req.query;
+        const cacheKey = `analytics:summary:${req.user._id}:${startDate || ''}:${endDate || ''}:${type || ''}:${category || ''}:${search || ''}`;
         if (redis) {
             try {
                 const cached = await redis.get(cacheKey);
@@ -31,9 +33,30 @@ exports.allTimeSummary = async (req, res) => {
             }
         }
 
+        let match = { user: req.user._id, isDeleted: false };
+        if (startDate || endDate) {
+            match.date = {};
+            if (startDate) match.date.$gte = new Date(startDate);
+            if (endDate) match.date.$lte = new Date(endDate);
+        }
+        if (type) {
+            match.type = type;
+        }
+        if (category) {
+            match.category = new mongoose.Types.ObjectId(category);
+        }
+        if (search && search.trim()) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            match.$or = [
+                { description: searchRegex },
+                { amount: isNaN(search) ? undefined : parseFloat(search) },
+                { type: searchRegex }
+            ].filter(Boolean);
+        }
+
         const data = await Transaction.aggregate([
             {
-                $match: { user: req.user._id, isDeleted: false }
+                $match: match
             },
             {
                 $group: {
@@ -290,7 +313,9 @@ exports.topExpenses = async (req, res) => {
             }
         }
 
-        const data = await analyticsService.getTopExpenses(req.user._id, 10);
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const data = await analyticsService.getTopExpenses(req.user._id, 10, currentMonthStart);
 
         if (redis) {
             try {
@@ -488,6 +513,7 @@ exports.aiInsights = async (req, res) => {
         const cacheKey = `analytics:aiInsights:${req.user._id}`;
         const forceRefresh = req.query.refresh === "true";
 
+        // Always try cache first (even with BullMQ)
         if (redis && !forceRefresh) {
             try {
                 const cached = await redis.get(cacheKey);
@@ -513,6 +539,22 @@ exports.aiInsights = async (req, res) => {
             }
         }
 
+        // ─── BullMQ Path: Enqueue and respond immediately ────────────────
+        const { insightsQueue } = require("../queues/insightsQueue");
+        if (insightsQueue) {
+            await insightsQueue.add(
+                "generate",
+                { userId: req.user._id.toString() },
+                { jobId: `insights-${req.user._id}-${Date.now()}` }
+            );
+            return res.status(202).json({
+                success: true,
+                message: "Insights are being generated",
+                data: { status: "processing" },
+            });
+        }
+
+        // ─── Fallback: Synchronous execution (no BullMQ) ────────────────
         const result = await aiInsightsService.generateInsights(req.user._id);
 
         if (redis) {

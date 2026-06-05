@@ -72,7 +72,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function callGemini(systemPrompt, userPrompt, isJson = true) {
     const primaryModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const backupModel = primaryModel === "gemini-2.5-flash" ? "gemini-2.5-flash-lite" : null;
+    const backupModel = primaryModel === "gemini-2.5-flash" ? "gemini-flash-latest" : null;
 
     async function attemptCall(modelName) {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${process.env.GEMINI_API_KEY}`;

@@ -39,7 +39,7 @@ const Login = () => {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <form onSubmit={handleSubmit} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
             <label>Email Address</label>
             <input 
@@ -47,6 +47,7 @@ const Login = () => {
               placeholder="you@example.com" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="new-email"
               required 
             />
           </div>
@@ -57,6 +58,7 @@ const Login = () => {
               placeholder="••••••••" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
               required 
             />
           </div>

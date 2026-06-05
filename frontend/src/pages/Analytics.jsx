@@ -136,15 +136,23 @@ const Analytics = () => {
                 <Activity size={20} color="var(--primary)" />
                 <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>Smart Insights</h3>
               </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <p style={{ fontSize: '1.3rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4 }}>
-                  {insights?.insight || insights?.insights?.[0] || "Not enough data yet."}
-                </p>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '10px' }}>
+                {insights?.insights ? (
+                  insights.insights.slice(0, 2).map((ins, i) => (
+                    <p key={i} style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, margin: 0 }}>
+                      • {ins}
+                    </p>
+                  ))
+                ) : (
+                  <p style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, margin: 0 }}>
+                    {insights?.insight || "Not enough data yet."}
+                  </p>
+                )}
                 {insights?.prevTotal > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '0.9rem' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Current: <strong style={{ color: 'white' }}>₹{insights.currentTotal.toFixed(2)}</strong></span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', fontSize: '0.85rem' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Current MTD: <strong style={{ color: 'var(--text-primary)' }}>₹{insights.currentTotal.toFixed(0)}</strong></span>
                     <span style={{ color: 'var(--surface-border)' }}>|</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>Previous: <strong style={{ color: 'white' }}>₹{insights.prevTotal.toFixed(2)}</strong></span>
+                    <span style={{ color: 'var(--text-secondary)' }}>Prev MTD: <strong style={{ color: 'var(--text-primary)' }}>₹{insights.prevTotal.toFixed(0)}</strong></span>
                   </div>
                 )}
               </div>
@@ -155,7 +163,7 @@ const Analytics = () => {
                <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '100px', height: '100px', background: 'var(--success)', opacity: 0.15, filter: 'blur(30px)', borderRadius: '50%' }}></div>
                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <PieChartIcon size={20} color="var(--success)" />
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>AI Projection (Next Month)</h3>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>AI Projection (This Month)</h3>
               </div>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
@@ -199,12 +207,14 @@ const Analytics = () => {
                       />
                       <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                       <RechartsTooltip 
+                        wrapperStyle={{ zIndex: 1000 }}
                         contentStyle={{ 
-                          backgroundColor: theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.95)', 
+                          backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff', 
                           borderColor: theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', 
                           borderRadius: '8px', 
                           color: theme === 'dark' ? '#fff' : '#0f172a' 
                         }}
+                        labelStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a', fontWeight: 'bold' }}
                         itemStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a' }}
                       />
                       <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
@@ -266,12 +276,15 @@ const Analytics = () => {
                         width={50}
                       />
                       <RechartsTooltip 
+                        wrapperStyle={{ zIndex: 1000 }}
                         contentStyle={{ 
-                          backgroundColor: theme === 'dark' ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.95)', 
+                          backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff', 
                           borderColor: theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', 
                           borderRadius: '8px', 
                           color: theme === 'dark' ? '#fff' : '#0f172a' 
                         }}
+                        labelStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a', fontWeight: 'bold' }}
+                        itemStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a' }}
                         labelFormatter={(label) => new Date(label).toLocaleDateString()}
                       />
                       <Area type="monotone" dataKey="total" stroke="#ec4899" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" />

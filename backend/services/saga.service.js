@@ -251,7 +251,22 @@ class SagaService {
                 }
             }
         ];
-        return await this.runSaga(steps);
+        const result = await this.runSaga(steps);
+        if (result) {
+            try {
+                const Notification = require("../models/notificationModel");
+                const { sendNotificationToUser } = require("../utils/socket");
+                const notification = await Notification.create({
+                    user: userId,
+                    type: "WALLET_TOPUP",
+                    message: `₹${amount} has been added to your wallet successfully.`
+                });
+                sendNotificationToUser(userId, notification);
+            } catch (err) {
+                console.error("Failed to send wallet topup notification", err);
+            }
+        }
+        return result;
     }
 
     async runProSubscriptionUpgradeSaga(userId, price = 499) {

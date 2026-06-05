@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { SocketProvider } from './context/SocketContext';
+import { ChatProvider } from './context/ChatContext';
 import Layout from './components/Layout';
 
 // Lazy loading pages
@@ -17,7 +18,9 @@ const Splits = React.lazy(() => import('./pages/Splits'));
 const Analytics = React.lazy(() => import('./pages/Analytics'));
 const Budgets = React.lazy(() => import('./pages/Budgets'));
 const Wallet = React.lazy(() => import('./pages/Wallet'));
-const Notifications = React.lazy(() => import('./pages/Notifications'));
+import Notifications from './pages/Notifications';
+const ChatPage = React.lazy(() => import('./pages/chat/ChatPage'));
+import Profile from './pages/Profile';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
@@ -59,6 +62,8 @@ const AppRoutes = () => {
           <Route path="budgets" element={<Budgets />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="notifications" element={<Notifications />} />
+          <Route path="chat" element={<ChatPage />} />
+          <Route path="profile" element={<Profile />} />
         </Route>
       </Routes>
     </Suspense>
@@ -70,25 +75,27 @@ function App() {
     <BrowserRouter>
       <ThemeProvider>
         <AuthProvider>
-          <SocketProvider>
-            <Toaster 
-              position="top-right" 
-              toastOptions={{
-                style: {
-                  background: 'var(--surface)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--surface-border)',
-                },
-                success: {
-                  iconTheme: { primary: '#10b981', secondary: '#fff' },
-                },
-                error: {
-                  iconTheme: { primary: '#ef4444', secondary: '#fff' },
-                },
-              }} 
-            />
-            <AppRoutes />
-          </SocketProvider>
+          <ChatProvider>
+            <SocketProvider>
+              <Toaster 
+                position="top-right" 
+                toastOptions={{
+                  style: {
+                    background: 'var(--surface)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--surface-border)',
+                  },
+                  success: {
+                    iconTheme: { primary: '#10b981', secondary: '#fff' },
+                  },
+                  error: {
+                    iconTheme: { primary: '#ef4444', secondary: '#fff' },
+                  },
+                }} 
+              />
+              <AppRoutes />
+            </SocketProvider>
+          </ChatProvider>
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>

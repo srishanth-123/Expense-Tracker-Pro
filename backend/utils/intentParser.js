@@ -20,7 +20,7 @@ const logger = require("./logger");
  * Includes the user's existing categories so the LLM can map natural
  * language names ("food", "groceries") to actual category names.
  */
-async function buildIntentSystemPrompt(userId) {
+async function buildIntentSystemPrompt(userId, pendingState = null) {
     // Fetch the user's active categories for grounding
     const categories = await Category.find({ user: userId, isDeleted: false })
         .select("name _id")
@@ -35,6 +35,22 @@ async function buildIntentSystemPrompt(userId) {
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
 
+    let pendingStateContext = "";
+    if (pendingState) {
+        pendingStateContext = `\nACTIVE CONVERSATION STATE:
+- Current Intent: "${pendingState.intent}"
+- Collected Fields: ${JSON.stringify(pendingState.collectedFields || {})}
+- Missing Fields: ${JSON.stringify(pendingState.missingFields || [])}
+- Awaiting Confirmation: ${pendingState.awaitingConfirmation || false}
+- Awaiting Resolution: ${pendingState.awaitingResolution || false}
+
+INSTRUCTION FOR PENDING STATE:
+The user is currently responding to a follow-up query regarding the missing fields of the pending action. 
+Please classify the user's input to extract the missing values. 
+If they provide the missing field value, populate the corresponding field inside 'entities'. 
+Keep the active intent as "${pendingState.intent}" rather than changing it to general chat, unless they explicitly request to cancel or change the task.`;
+    }
+
     return `You are an intent classifier for a personal finance expense tracker app.
 
 Given the user's message, extract a structured JSON object with the following fields:
@@ -45,18 +61,18 @@ Given the user's message, extract a structured JSON object with the following fi
   "entities": {
     "amount": number or null,
     "type": "income" or "expense" or null,
-    "categoryName": string or null,
+    "categoryName": string or null (CRITICAL: extract ONLY the clean category name itself, e.g., "Travel", "Food", "Groceries". NEVER extract sentences or phrases like "i need to create a budget on travel"),
     "description": string or null,
     "date": "YYYY-MM-DD" or null,
     "month": number or null,
     "year": number or null,
     "budgetLimit": number or null,
-    "categoryNewName": string or null,
+    "categoryNewName": string or null (CRITICAL: extract ONLY the clean new category name itself, e.g., "Entertainment", "Utilities"),
     "analyticsType": "total_spending" | "category_breakdown" | "top_expenses" | "spending_prediction" | "budget_status" | "monthly_report" | "smart_insights" | null,
     
     "newAmount": number or null,
     "newDescription": string or null,
-    "newCategoryName": string or null,
+    "newCategoryName": string or null (CRITICAL: extract ONLY the clean new category name itself, e.g., "Travel", "Groceries"),
     "newLimit": number or null,
     "newMonth": number or null,
     "newYear": number or null
@@ -91,12 +107,14 @@ RULES:
 13. If you cannot determine the intent with reasonable confidence, use GENERAL_CHAT.
 14. For missingFields, list ONLY the required fields that are still unknown.
 15. Provide a natural, friendly followUpQuestion if there are missing fields.
+16. For categoryName, categoryNewName, and newCategoryName, extract ONLY the single-word or short phrase representing the category itself (e.g. "Travel", "Groceries", "Food"). NEVER extract the entire sentence, description, or verb phrases (e.g. do NOT extract "create a budget on travel", "spent on food", or "i need to create a budget on travel").
 
 User's existing categories:
 ${categoryList}
 
 Current date: ${currentDate}
 Current month/year: ${currentMonth}/${currentYear}
+${pendingStateContext || ""}
 
 Return ONLY valid JSON. No markdown, no explanation.`;
 }
@@ -108,7 +126,7 @@ Return ONLY valid JSON. No markdown, no explanation.`;
  * @param {string} userId - The user's ObjectId
  * @returns {Object} Parsed intent object, always returns a valid shape
  */
-async function parseIntent(message, userId) {
+async function parseIntent(message, userId, pendingState = null) {
     const fallback = {
         intent: "GENERAL_CHAT",
         confidence: 1.0,
@@ -130,7 +148,7 @@ async function parseIntent(message, userId) {
             return { ...fallback, intent: "CANCEL", confidence: 1.0 };
         }
 
-        const systemPrompt = await buildIntentSystemPrompt(userId);
+        const systemPrompt = await buildIntentSystemPrompt(userId, pendingState);
         const rawResponse = await callLLM(systemPrompt, message, true);
 
         if (!rawResponse) {
@@ -169,10 +187,21 @@ async function parseIntent(message, userId) {
             return { ...fallback, intent: "GENERAL_CHAT" };
         }
 
+        const entities = parsed.entities || {};
+        if (entities.categoryName) {
+            entities.categoryName = cleanCategoryName(entities.categoryName);
+        }
+        if (entities.categoryNewName) {
+            entities.categoryNewName = cleanCategoryName(entities.categoryNewName);
+        }
+        if (entities.newCategoryName) {
+            entities.newCategoryName = cleanCategoryName(entities.newCategoryName);
+        }
+
         return {
             intent: parsed.intent,
             confidence: parsed.confidence || 0.8,
-            entities: parsed.entities || {},
+            entities,
             missingFields: parsed.missingFields || [],
             followUpQuestion: parsed.followUpQuestion || null
         };
@@ -182,4 +211,46 @@ async function parseIntent(message, userId) {
     }
 }
 
-module.exports = { parseIntent };
+function cleanCategoryName(name) {
+    if (!name) return name;
+    let clean = name.trim();
+    
+    const patternsToStrip = [
+        /^(i\s+)?need\s+to\s+(create|add|make|update|delete)\s+a\s+budget\s+on\s+/i,
+        /^(i\s+)?need\s+to\s+(create|add|make|update|delete)\s+a\s+category\s+(called|named|on|for)\s+/i,
+        /^(i\s+)?need\s+to\s+(create|add|make|update|delete)\s+/i,
+        /^create\s+a\s+budget\s+(on|for|of)\s+/i,
+        /^create\s+budget\s+(on|for|of)\s+/i,
+        /^budget\s+(on|for|of)\s+/i,
+        /^spent\s+on\s+/i,
+        /^spend\s+on\s+/i,
+        /^expense\s+(on|for)\s+/i,
+        /^add\s+a\s+(new\s+)?category\s+(called|named|for|on)\s+/i,
+        /^add\s+a\s+budget\s+(for|on)\s+/i,
+        /^add\s+/i,
+        /^new\s+/i,
+        /^category\s+called\s+/i,
+        /^category\s+named\s+/i,
+        /^(for|on|about|to|of)\s+/i
+    ];
+
+    let changed;
+    do {
+        changed = false;
+        for (const pattern of patternsToStrip) {
+            if (pattern.test(clean)) {
+                clean = clean.replace(pattern, "");
+                clean = clean.trim();
+                changed = true;
+            }
+        }
+    } while (changed);
+
+    if (clean.length > 0) {
+        clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+    }
+    
+    return clean.trim();
+}
+
+module.exports = { parseIntent, cleanCategoryName };

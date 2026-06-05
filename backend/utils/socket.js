@@ -15,6 +15,26 @@ const initSocket = (server) => {
         }
     });
 
+    // ─── Socket.io Redis Adapter (multi-node broadcasting) ───────────────
+    const ioRedisConnection = require('../config/ioredis');
+    if (ioRedisConnection) {
+        try {
+            const { createAdapter } = require('@socket.io/redis-adapter');
+            const Redis = require('ioredis');
+
+            // Socket.io adapter needs a dedicated pub/sub pair
+            const pubClient = ioRedisConnection;
+            const subClient = pubClient.duplicate();
+
+            io.adapter(createAdapter(pubClient, subClient));
+            logger.info('[Socket.io] Redis adapter attached — multi-node broadcasting enabled');
+        } catch (err) {
+            logger.warn('[Socket.io] Redis adapter failed to attach, falling back to single-node:', err.message);
+        }
+    } else {
+        logger.info('[Socket.io] Running in single-node mode (no ioredis configured)');
+    }
+
     // Authentication middleware for sockets
     io.use((socket, next) => {
         try {
@@ -38,7 +58,8 @@ const initSocket = (server) => {
         
         // Add to userSockets map
         userSockets.set(userId, socket.id);
-        logger.info(`User connected to socket: ${userId}`);
+        socket.join(`user:${userId}`);
+        logger.info(`User connected to socket: ${userId} and joined room user:${userId}`);
 
         socket.on('disconnect', () => {
             userSockets.delete(userId);
@@ -56,13 +77,14 @@ const sendNotificationToUser = (userId, notification) => {
         return;
     }
     
-    const socketId = userSockets.get(userId.toString());
-    if (socketId) {
-        io.to(socketId).emit('new_notification', notification);
-    }
+    io.to(`user:${userId.toString()}`).emit('new_notification', notification);
 };
+
+// Getter for the io instance (used for shutdown)
+const getIO = () => io;
 
 module.exports = {
     initSocket,
-    sendNotificationToUser
+    sendNotificationToUser,
+    getIO,
 };

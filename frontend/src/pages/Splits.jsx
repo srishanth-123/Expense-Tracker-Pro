@@ -1,4 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import { Users, Plus, CheckCircle, Clock, X, Search } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
@@ -34,6 +35,18 @@ const Splits = () => {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
+  // Toggle Scroll Lock when any modal is open
+  useEffect(() => {
+    if (isModalOpen || confirmSettle.isOpen) {
+      document.body.classList.add('modal-open');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+    };
+  }, [isModalOpen, confirmSettle.isOpen]);
+
   const fetchSplits = async () => {
     try {
       const res = await api.get('/split/user');
@@ -57,23 +70,26 @@ const Splits = () => {
     return () => window.removeEventListener('financialDataUpdated', handleUpdate);
   }, []);
 
-  // Handle User Search
+  // Handle User Search (Debounced & Instant Spinner)
   useEffect(() => {
+    const queryTrimmed = searchQuery.trim();
+    if (!queryTrimmed || queryTrimmed.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
     const delayDebounceFn = setTimeout(async () => {
-      if (searchQuery.length < 2) {
-        setSearchResults([]);
-        return;
-      }
-      setSearching(true);
       try {
-        const res = await api.get(`/auth/users?query=${searchQuery}`);
+        const res = await api.get(`/auth/users?query=${queryTrimmed}`);
         setSearchResults(Array.isArray(res) ? res : res.data || []);
       } catch (err) {
         // fail silently for search
       } finally {
         setSearching(false);
       }
-    }, 500);
+    }, 300); // Snappy 300ms debounce delay
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
@@ -130,23 +146,20 @@ const Splits = () => {
 
   const handleSettle = async (splitId, amount) => {
     if (confirmSettle.isOpen) return;
-    console.log('handleSettle called with:', { splitId, amount });
     setConfirmSettle({ isOpen: true, splitId, amount });
   };
 
   const confirmSettlement = async () => {
     const { splitId, amount } = confirmSettle;
-    console.log('confirmSettlement called with splitId:', splitId, 'amount:', amount);
-    const idempotencyKey = `settle_${splitId}_${Date.now()}`;
+    // Stable idempotency key: a split can only be settled once per user/split reference.
+    const idempotencyKey = `settle_${splitId}`;
     setSettlingId(splitId);
     setConfirmSettle({ isOpen: false, splitId: null, amount: 0 });
     try {
-      console.log('Calling API to settle split...');
       const response = await api.post('/split/settle', 
         { splitId }, 
         { headers: { 'x-idempotency-key': idempotencyKey } }
       );
-      console.log('Settlement API response:', response);
       
       const receiverName = response?.receiverName || 'Friend';
       const formattedAmount = fmt(amount);
@@ -162,7 +175,6 @@ const Splits = () => {
       fetchSplits();
     } catch (err) {
       console.error('Settlement error:', err);
-      console.error('Error response:', err.response?.data);
       toast.error(err.response?.data?.message || 'Settlement failed. Check wallet balance.', {
         duration: 5000,
         style: {
@@ -259,8 +271,8 @@ const Splits = () => {
         </div>
       )}
 
-      {/* Add Split Modal */}
-      {isModalOpen && (
+      {/* Add Split Modal (Rendered via React Portal under document.body) */}
+      {isModalOpen && createPortal(
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setIsModalOpen(false)}>
           <div className="modal-content">
             <div className="modal-header">
@@ -306,7 +318,7 @@ const Splits = () => {
                   </div>
                   
                   {/* Search Dropdown */}
-                  {searchQuery.length >= 2 && (
+                  {searchQuery.trim().length >= 2 && (
                     <div className="sp-search-results">
                       {searching ? (
                         <div className="sp-search-item" style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Searching...</div>
@@ -352,11 +364,12 @@ const Splits = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Settlement Confirmation Modal */}
-      {confirmSettle.isOpen && (
+      {/* Settlement Confirmation Modal (Rendered via React Portal under document.body) */}
+      {confirmSettle.isOpen && createPortal(
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setConfirmSettle({ isOpen: false, splitId: null, amount: 0 })}>
           <div className="modal-content" style={{ maxWidth: '400px' }}>
             <div className="modal-header">
@@ -390,7 +403,8 @@ const Splits = () => {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

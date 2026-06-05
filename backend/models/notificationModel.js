@@ -18,7 +18,11 @@ const notificationSchema = new mongoose.Schema(
                 "SYSTEM",
                 "PRO_UPGRADE",
                 "WALLET_WITHDRAWAL",
-                "SPLIT_SETTLEMENT_RECEIVED"
+                "SPLIT_SETTLEMENT_RECEIVED",
+                "TRANSACTION_CREATED",
+                "TRANSACTION_UPDATED",
+                "TRANSACTION_DELETED",
+                "TRANSACTION_RESTORED"
             ],
             required: true,
         },
@@ -41,6 +45,48 @@ const notificationSchema = new mongoose.Schema(
 // Index for faster queries filtering by user and sorting by date
 notificationSchema.index({ user: 1, createdAt: -1 });
 notificationSchema.index({ user: 1, read: 1 });
+
+const redis = require("../config/redis");
+
+// Automatically invalidate Redis cache when notifications are created or modified
+notificationSchema.post("save", async function(doc) {
+    if (redis) {
+        try {
+            const keys = await redis.keys(`notifications:${doc.user}:*`);
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } catch (err) {
+            console.error("Failed to clear notification cache on save:", err.message);
+        }
+    }
+});
+
+notificationSchema.post("findOneAndUpdate", async function(doc) {
+    if (doc && redis) {
+        try {
+            const keys = await redis.keys(`notifications:${doc.user}:*`);
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } catch (err) {
+            console.error("Failed to clear notification cache on findOneAndUpdate:", err.message);
+        }
+    }
+});
+
+notificationSchema.post("updateMany", async function() {
+    if (redis) {
+        try {
+            const keys = await redis.keys("notifications:*");
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } catch (err) {
+            console.error("Failed to clear notification cache on updateMany:", err.message);
+        }
+    }
+});
 
 const Notification = mongoose.model("Notification", notificationSchema);
 module.exports = Notification;

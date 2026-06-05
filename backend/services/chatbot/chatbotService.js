@@ -1,29 +1,15 @@
-/**
- * Chat Controller (v2 — AI Financial Assistant with Edit & Delete)
- * ─────────────────────────────────────────────────────────────
- * Extends the chatbot into a conversational AI assistant
- * that can detect user intent, handle multi-turn follow-ups, execute
- * financial actions (create, edit, and delete transactions/budgets/categories),
- * answer analytics questions with real data, and fall back to general chat.
- *
- * UNCHANGED: getHistory, clearHistory — identical to v1.
- * CHANGED:   sendMessage — now supports edit/delete flows.
- */
+const ChatSession = require("../../models/chat/ChatSession");
+const ChatMessage = require("../../models/chat/ChatMessage");
+const ConversationSummary = require("../../models/chat/ConversationSummary");
+const redisMemory = require("../../utils/conversation/redisMemory");
+const geminiService = require("../ai/geminiService");
+const actionExecutor = require("../../utils/actionExecutor");
+const logger = require("../../utils/logger");
+const { callLLM } = require("../llmProvider");
+const { cleanCategoryName } = require("../../utils/intentParser");
+const idempotency = require("../../utils/idempotency");
 
-const User = require("../models/user");
-const ChatMessage = require("../models/chatMessage");
-const Transaction = require("../models/Transaction");
-const Budget = require("../models/budget");
-const { callLLM } = require("../services/llmProvider");
-
-// New AI assistant modules
-const { parseIntent } = require("../utils/intentParser");
-const conversationManager = require("../utils/conversationManager");
-const actionExecutor = require("../utils/actionExecutor");
-const logger = require("../utils/logger");
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
+// ─── Prompt Constants ────────────────────────────────────────────────────────
 const GENERAL_CHAT_SYSTEM_PROMPT = `You are a friendly, expert personal finance assistant integrated into an Expense Tracker app.
 You have access to the user's live financial data below.
 Answer queries based on this real data. Be concise, actionable, and warm. Use currency as INR (₹).
@@ -41,95 +27,128 @@ Include practical tips where relevant. Never mention raw JSON or technical detai
 Analytics Data:
 `;
 
-// ─── Main Send Message Handler ───────────────────────────────────────────────
+/**
+ * Handle user messages in the stateful pipeline.
+ */
+async function handleSessionMessage(userId, conversationId, message, user) {
+    // 1. Save user message to database
+    await ChatMessage.create({
+        user: userId,
+        session: conversationId,
+        role: "user",
+        content: message
+    });
 
-exports.sendMessage = async (req, res) => {
-    try {
-        const { message } = req.body;
-        if (!message || !message.trim()) {
-            return res.status(400).json({ success: false, message: "Message is required." });
-        }
+    // 2. Load short-term conversation state from Redis
+    const pendingState = await redisMemory.getState(userId, conversationId);
+    let reply;
 
-        const userId = req.user._id;
-        const now = new Date();
-
-        // ── Rate limiting (free tier: 5 messages/month) ──
-        const user = await User.findById(userId).select("walletBalance name isPro");
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const messageCount = await ChatMessage.countDocuments({
-            user: userId,
-            role: "user",
-            createdAt: { $gte: startOfMonth }
-        });
-
-        if (!user.isPro && messageCount >= 5) {
-            return res.status(403).json({
-                success: false,
-                isLimitExceeded: true,
-                message: "You have used your 5 free messages for this month. Upgrade to Pro for unlimited chat."
-            });
-        }
-
-        // ── Save user message ──
-        await ChatMessage.create({ user: userId, role: "user", content: message });
-
-        // ── Check for pending conversation state ──
-        const pendingState = await conversationManager.getState(userId);
-        let reply;
-
-        if (pendingState) {
-            reply = await handlePendingState(userId, message, pendingState, user);
-        } else {
-            reply = await handleNewMessage(userId, message, user);
-        }
-
-        // ── Save assistant reply ──
-        const savedReply = await ChatMessage.create({
-            user: userId,
-            role: "model",
-            content: typeof reply === "string" ? reply : JSON.stringify(reply)
-        });
-
-        // Build response payload
-        const responsePayload = {
-            success: true,
-            data: savedReply,
-            isPro: user.isPro,
-            limit: 5,
-            used: messageCount + 1,
-            remaining: Math.max(0, 5 - (messageCount + 1))
-        };
-
-        // If reply is structured (confirmation/result/disambiguation), attach metadata
-        if (typeof reply === "object" && reply.responseType) {
-            responsePayload.structured = reply;
-        }
-
-        res.json(responsePayload);
-
-    } catch (error) {
-        logger.error("Chat error:", error);
-        res.status(500).json({ success: false, message: "Server error in assistant." });
+    if (pendingState) {
+        reply = await handlePendingState(userId, conversationId, message, pendingState, user);
+    } else {
+        reply = await handleNewMessage(userId, conversationId, message, user);
     }
-};
 
-// ─── Handle messages when there's a pending state ────────────────────────────
+    // 3. Save assistant reply to database
+    const replyString = typeof reply === "string" ? reply : JSON.stringify(reply);
+    const savedReply = await ChatMessage.create({
+        user: userId,
+        session: conversationId,
+        role: "model",
+        content: replyString
+    });
 
-async function handlePendingState(userId, message, state, user) {
-    const intent = await parseIntent(message, userId);
+    // 4. Update session timestamp
+    await ChatSession.findByIdAndUpdate(conversationId, { updatedAt: new Date() });
 
-    // ── CANCEL ──
-    if (intent.intent === "CANCEL") {
-        await conversationManager.clearState(userId);
+    // 5. Trigger conversation summarization asynchronously if history gets long
+    triggerBackgroundSummarization(userId, conversationId).catch(err => {
+        logger.error(`[chatbotService] background summarization error: ${err.message}`);
+    });
+
+    // 6. Build response payload
+    const responsePayload = {
+        success: true,
+        data: savedReply,
+        isPro: user.isPro
+    };
+
+    if (typeof reply === "object" && reply.responseType) {
+        responsePayload.structured = reply;
+    }
+
+    return responsePayload;
+}
+
+/**
+ * State machine: Handle follow-up inputs
+ */
+async function handlePendingState(userId, conversationId, message, state, user) {
+    const parsed = await geminiService.detectIntent(message, userId, state);
+
+    // Switch to a new flow if the user explicitly requested a different action
+    const isDifferentAction = parsed.intent !== state.intent && 
+                             parsed.intent !== "GENERAL_CHAT" && 
+                             parsed.intent !== "CONFIRM" && 
+                             parsed.intent !== "CANCEL";
+    if (isDifferentAction) {
+        logger.info(`[chatbotService] Intent mismatch: switching from ${state.intent} to ${parsed.intent}`);
+        await redisMemory.clearState(userId, conversationId);
+        return await handleNewMessage(userId, conversationId, message, user);
+    }
+
+    // Cancel flow
+    if (parsed.intent === "CANCEL") {
+        await redisMemory.clearState(userId, conversationId);
         return "No problem! I've cancelled that action. What else can I help you with?";
     }
 
-    // ── CONFIRM (all fields present, awaiting confirmation) ──
-    if (intent.intent === "CONFIRM" && state.awaitingConfirmation) {
-        return await executeAction(userId, state);
+    // Confirm flow
+    if (parsed.intent === "CONFIRM" && state.awaitingConfirmation) {
+        return await executeAction(userId, conversationId, state);
     }
 
-    // ── Awaiting Resolution (disambiguating multiple matches) ──
+    // Mid-confirmation field editing (e.g., "change amount to 700")
+    if (state.awaitingConfirmation && parsed.intent !== "CONFIRM" && parsed.intent !== "CANCEL") {
+        const editEntities = parsed.entities || {};
+        let modified = false;
+
+        if (state.intent.startsWith("CREATE")) {
+            const allowed = getAllowedCreateFields(state.intent);
+            for (const [key, val] of Object.entries(editEntities)) {
+                if (val !== null && val !== undefined && allowed.includes(key)) {
+                    state.collectedFields[key] = val;
+                    modified = true;
+                }
+            }
+        } else if (state.intent.startsWith("UPDATE")) {
+            const allowed = getAllowedUpdateFields(state.intent);
+            // Map regular field names to update field names
+            const updateMapping = {
+                amount: "newAmount", description: "newDescription",
+                categoryName: "newCategoryName", date: "newDate", type: "newType",
+                budgetLimit: "newLimit", month: "newMonth", year: "newYear",
+                categoryNewName: "newCategoryName"
+            };
+            for (const [key, val] of Object.entries(editEntities)) {
+                if (val === null || val === undefined) continue;
+                const updateKey = updateMapping[key] || key;
+                if (allowed.includes(updateKey)) {
+                    if (!state.updates) state.updates = {};
+                    state.updates[updateKey] = val;
+                    modified = true;
+                }
+            }
+        }
+
+        if (modified) {
+            await redisMemory.setState(userId, conversationId, state);
+            return buildConfirmationResponse(state);
+        }
+        // If nothing was modified, fall through to normal new-message handling
+    }
+
+    // Awaiting choices selection (Disambiguation)
     if (state.awaitingResolution && state.candidates && state.candidates.length > 0) {
         const matchIndex = parseInt(message.trim());
         let selectedCandidate = null;
@@ -146,9 +165,8 @@ async function handlePendingState(userId, message, state, user) {
 
         if (selectedCandidate) {
             const isUpdate = state.intent.startsWith("UPDATE");
-            
-            // Re-evaluate if updates needs fields
             let missingFields = [];
+
             if (isUpdate) {
                 if (state.intent === "UPDATE_TRANSACTION") {
                     const hasUpdate = state.updates.newAmount || state.updates.newDescription || state.updates.newCategoryName || state.updates.newDate || state.updates.newType;
@@ -169,8 +187,8 @@ async function handlePendingState(userId, message, state, user) {
                     awaitingResolution: false,
                     awaitingConfirmation: false
                 };
-                await conversationManager.setState(userId, nextState);
-                const question = conversationManager.generateFollowUpQuestion(missingFields, state.intent);
+                await redisMemory.setState(userId, conversationId, nextState);
+                const question = generateFollowUpQuestion(missingFields, state.intent);
                 return {
                     responseType: "follow_up",
                     message: `Selected: "${selectedCandidate.label}". ${question}`,
@@ -188,7 +206,7 @@ async function handlePendingState(userId, message, state, user) {
                 awaitingResolution: false,
                 selectedItemLabel: selectedCandidate.label
             };
-            await conversationManager.setState(userId, nextState);
+            await redisMemory.setState(userId, conversationId, nextState);
             return buildConfirmationResponse(nextState);
         } else {
             return {
@@ -199,9 +217,9 @@ async function handlePendingState(userId, message, state, user) {
         }
     }
 
-    // ── Follow-up: user providing missing fields ──
+    // Awaiting missing field collection
     if (state.missingFields && state.missingFields.length > 0) {
-        const followUpIntent = await parseIntent(message, userId);
+        const followUpIntent = await geminiService.detectIntent(message, userId, state);
         const newEntities = followUpIntent.entities || {};
         const mappedEntities = { ...newEntities };
         const missingField = state.missingFields[0];
@@ -213,7 +231,7 @@ async function handlePendingState(userId, message, state, user) {
 
         const updatedState = { ...state };
         if (state.intent.startsWith("UPDATE")) {
-            updatedState.updates = {
+            const rawUpdates = {
                 ...state.updates,
                 ...filterNull(mappedEntities),
                 ...(mappedEntities.amount ? { newAmount: mappedEntities.amount } : {}),
@@ -221,26 +239,37 @@ async function handlePendingState(userId, message, state, user) {
                 ...(mappedEntities.categoryNewName ? { newCategoryName: mappedEntities.categoryNewName } : {}),
                 ...(mappedEntities.description ? { newDescription: mappedEntities.description } : {})
             };
+            const allowed = getAllowedUpdateFields(state.intent);
+            updatedState.updates = {};
+            for (const f of allowed) {
+                if (rawUpdates[f] !== undefined && rawUpdates[f] !== null) {
+                    updatedState.updates[f] = rawUpdates[f];
+                }
+            }
             updatedState.missingFields = state.missingFields.filter(f => !updatedState.updates[f]);
         } else {
-            updatedState.collectedFields = {
+            const allowed = getAllowedCreateFields(state.intent);
+            const mergedFields = {
                 ...state.collectedFields,
                 ...filterNull(mappedEntities)
             };
+            updatedState.collectedFields = {};
+            for (const f of allowed) {
+                if (mergedFields[f] !== undefined && mergedFields[f] !== null) {
+                    updatedState.collectedFields[f] = mergedFields[f];
+                }
+            }
             updatedState.missingFields = state.missingFields.filter(f => !updatedState.collectedFields[f]);
         }
 
         if (updatedState.missingFields.length === 0) {
             updatedState.awaitingConfirmation = true;
-            await conversationManager.setState(userId, updatedState);
+            await redisMemory.setState(userId, conversationId, updatedState);
             return buildConfirmationResponse(updatedState);
         }
 
-        await conversationManager.setState(userId, updatedState);
-        const question = conversationManager.generateFollowUpQuestion(
-            updatedState.missingFields,
-            updatedState.intent
-        );
+        await redisMemory.setState(userId, conversationId, updatedState);
+        const question = generateFollowUpQuestion(updatedState.missingFields, updatedState.intent);
         return {
             responseType: "follow_up",
             message: `Got it! ${question}`,
@@ -249,29 +278,29 @@ async function handlePendingState(userId, message, state, user) {
         };
     }
 
-    // ── If state is weird, clear and process as new ──
-    await conversationManager.clearState(userId);
-    return await handleNewMessage(userId, message, user);
+    // State mismatch fallback
+    await redisMemory.clearState(userId, conversationId);
+    return await handleNewMessage(userId, conversationId, message, user);
 }
 
-// ─── Handle fresh messages (no pending state) ────────────────────────────────
+/**
+ * Handle new user requests (starts fresh flows)
+ */
+async function handleNewMessage(userId, conversationId, message, user) {
+    const parsed = await geminiService.detectIntent(message, userId);
+    logger.info(`[StatefulChat] Intent: ${parsed.intent} (confidence: ${parsed.confidence})`);
 
-async function handleNewMessage(userId, message, user) {
-    const intent = await parseIntent(message, userId);
-
-    logger.info(`[Chat] Intent detected: ${intent.intent} (confidence: ${intent.confidence})`);
-
-    switch (intent.intent) {
+    switch (parsed.intent) {
         case "GENERAL_CHAT":
-            return await handleGeneralChat(userId, message, user);
+            return await handleGeneralChat(userId, conversationId, message, user);
 
         case "ANALYTICS_QUERY":
-            return await handleAnalyticsQuery(userId, message, intent);
+            return await handleAnalyticsQuery(userId, conversationId, message, parsed);
 
         case "CREATE_TRANSACTION":
         case "CREATE_BUDGET":
         case "CREATE_CATEGORY":
-            return await handleCreateIntent(userId, intent);
+            return await handleCreateIntent(userId, conversationId, parsed);
 
         case "DELETE_TRANSACTION":
         case "UPDATE_TRANSACTION":
@@ -279,7 +308,7 @@ async function handleNewMessage(userId, message, user) {
         case "UPDATE_BUDGET":
         case "DELETE_CATEGORY":
         case "UPDATE_CATEGORY":
-            return await handleMutationIntent(userId, intent, message);
+            return await handleMutationIntent(userId, conversationId, parsed, message);
 
         case "CONFIRM":
             return "There's nothing pending to confirm. How can I help you?";
@@ -287,84 +316,100 @@ async function handleNewMessage(userId, message, user) {
             return "Nothing to cancel! What would you like to do?";
 
         default:
-            return await handleGeneralChat(userId, message, user);
+            return await handleGeneralChat(userId, conversationId, message, user);
     }
 }
 
-// ─── Intent Handlers ─────────────────────────────────────────────────────────
-
-async function handleGeneralChat(userId, message, user) {
+/**
+ * Normal conversational query with history optimization
+ */
+async function handleGeneralChat(userId, conversationId, message, user) {
     const context = await actionExecutor.buildFinancialContext(userId);
-    const systemPrompt = GENERAL_CHAT_SYSTEM_PROMPT + context;
+    const summaryDoc = await ConversationSummary.findOne({ session: conversationId });
+    
+    // Load last 10 messages from session to keep context compact
+    const recentMessages = await ChatMessage.find({ session: conversationId })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+    
+    recentMessages.reverse();
 
-    const history = await ChatMessage.find({ user: userId })
-        .sort({ createdAt: 1 })
-        .limit(10);
-
-    let promptWithHistory = "";
-    if (history.length > 0) {
-        promptWithHistory += "Conversation history:\n";
-        history.forEach(h => {
-            const content = h.content.length > 300 ? h.content.substring(0, 300) + "..." : h.content;
-            promptWithHistory += `${h.role === "user" ? "User" : "Assistant"}: ${content}\n`;
+    let historyString = "";
+    if (summaryDoc) {
+        historyString += `Previous Conversation Summary: ${summaryDoc.summary}\n`;
+    }
+    if (recentMessages.length > 0) {
+        historyString += "Recent conversation history:\n";
+        recentMessages.forEach(m => {
+            historyString += `${m.role === "user" ? "User" : "Assistant"}: ${m.content}\n`;
         });
     }
-    promptWithHistory += `User: ${message}`;
 
-    const responseText = await callLLM(systemPrompt, promptWithHistory, false);
-    return responseText || "I'm having trouble analyzing your finances right now. Please try again in a moment.";
+    const systemPrompt = GENERAL_CHAT_SYSTEM_PROMPT + context;
+    const promptInput = `${historyString}User: ${message}`;
+
+    const response = await callLLM(systemPrompt, promptInput, false);
+    return response || "I'm having trouble analyzing your request right now. Please try again.";
 }
 
-async function handleAnalyticsQuery(userId, message, intent) {
-    const analyticsType = intent.entities?.analyticsType || "smart_insights";
+/**
+ * Handle Analytics requests
+ */
+async function handleAnalyticsQuery(userId, conversationId, message, parsed) {
+    const analyticsType = parsed.entities?.analyticsType || "smart_insights";
     const result = await actionExecutor.executeAnalyticsQuery(userId, analyticsType);
 
     if (!result.success) {
-        return "Sorry, I couldn't fetch that data right now. Please try again.";
+        return "Sorry, I couldn't fetch that analytics report right now. Please try again.";
     }
 
     const systemPrompt = ANALYTICS_RESPONSE_PROMPT + result.summary;
-    const responseText = await callLLM(systemPrompt, message, false);
-
-    return responseText || result.summary;
+    const response = await callLLM(systemPrompt, message, false);
+    return response || result.summary;
 }
 
-async function handleCreateIntent(userId, intent) {
+/**
+ * Handle CREATE intent
+ */
+async function handleCreateIntent(userId, conversationId, intent) {
     const fields = mapEntitiesToFields(intent);
-    const requiredFields = conversationManager.getRequiredFields(intent.intent);
-    const missingFields = requiredFields.filter(f => !fields[f]);
+    const required = getRequiredFields(intent.intent);
+    const missing = required.filter(f => !fields[f]);
 
-    if (missingFields.length === 0) {
+    if (missing.length === 0) {
         const state = {
             intent: intent.intent,
             collectedFields: fields,
             missingFields: [],
             awaitingConfirmation: true
         };
-        await conversationManager.setState(userId, state);
+        await redisMemory.setState(userId, conversationId, state);
         return buildConfirmationResponse(state);
     }
 
     const state = {
         intent: intent.intent,
         collectedFields: fields,
-        missingFields,
+        missingFields: missing,
         awaitingConfirmation: false
     };
-    await conversationManager.setState(userId, state);
+    await redisMemory.setState(userId, conversationId, state);
 
-    const question = intent.followUpQuestion ||
-        conversationManager.generateFollowUpQuestion(missingFields, intent.intent);
+    const question = intent.followUpQuestion || generateFollowUpQuestion(missing, intent.intent);
 
     return {
         responseType: "follow_up",
         message: `I'd love to help! ${question}`,
         collectedFields: fields,
-        missingFields
+        missingFields: missing
     };
 }
 
-async function handleMutationIntent(userId, intent, rawMessage) {
+/**
+ * Handle UPDATE/DELETE intent (candidate resolution / search matching)
+ */
+async function handleMutationIntent(userId, conversationId, intent, messageText) {
     const isDelete = intent.intent.startsWith("DELETE");
     const isUpdate = intent.intent.startsWith("UPDATE");
     const type = intent.intent.split("_")[1]; // "TRANSACTION", "BUDGET", "CATEGORY"
@@ -377,7 +422,7 @@ async function handleMutationIntent(userId, intent, rawMessage) {
     } else if (type === "BUDGET") {
         candidates = await actionExecutor.findMatchingBudgets(userId, searchCriteria);
     } else if (type === "CATEGORY") {
-        const nameQuery = searchCriteria.categoryName || searchCriteria.categoryNewName || rawMessage;
+        const nameQuery = searchCriteria.categoryName || searchCriteria.categoryNewName || messageText;
         candidates = await actionExecutor.findMatchingCategories(userId, nameQuery);
     }
 
@@ -421,7 +466,7 @@ async function handleMutationIntent(userId, intent, rawMessage) {
                     awaitingConfirmation: false,
                     selectedItemLabel: candidateList[0].label
                 };
-                await conversationManager.setState(userId, state);
+                await redisMemory.setState(userId, conversationId, state);
                 return {
                     responseType: "follow_up",
                     message: `I found this transaction: "${candidateList[0].label}". What is the new amount you'd like to set?`,
@@ -445,7 +490,7 @@ async function handleMutationIntent(userId, intent, rawMessage) {
                     awaitingConfirmation: false,
                     selectedItemLabel: candidateList[0].label
                 };
-                await conversationManager.setState(userId, state);
+                await redisMemory.setState(userId, conversationId, state);
                 return {
                     responseType: "follow_up",
                     message: `I found this budget: "${candidateList[0].label}". What is the new budget limit you'd like to set?`,
@@ -465,7 +510,7 @@ async function handleMutationIntent(userId, intent, rawMessage) {
                     awaitingConfirmation: false,
                     selectedItemLabel: candidateList[0].label
                 };
-                await conversationManager.setState(userId, state);
+                await redisMemory.setState(userId, conversationId, state);
                 return {
                     responseType: "follow_up",
                     message: `I found this category: "${candidateList[0].label}". What is the new name you'd like to give it?`,
@@ -485,10 +530,11 @@ async function handleMutationIntent(userId, intent, rawMessage) {
             awaitingConfirmation: true,
             selectedItemLabel: candidateList[0].label
         };
-        await conversationManager.setState(userId, state);
+        await redisMemory.setState(userId, conversationId, state);
         return buildConfirmationResponse(state);
     }
 
+    // Multiple candidates found -> Ask for resolution (render choose list)
     const state = {
         intent: intent.intent,
         candidates: candidateList,
@@ -497,7 +543,7 @@ async function handleMutationIntent(userId, intent, rawMessage) {
         awaitingResolution: true,
         awaitingConfirmation: false
     };
-    await conversationManager.setState(userId, state);
+    await redisMemory.setState(userId, conversationId, state);
 
     return {
         responseType: "disambiguation",
@@ -506,42 +552,60 @@ async function handleMutationIntent(userId, intent, rawMessage) {
     };
 }
 
-// ─── Execute Action ──────────────────────────────────────────────────────────
+/**
+ * Save final mutation payload via Action Executor.
+ * Wrapped with idempotency to prevent duplicate actions from double-clicks.
+ */
+async function executeAction(userId, conversationId, state) {
+    await redisMemory.clearState(userId, conversationId);
 
-async function executeAction(userId, state) {
-    await conversationManager.clearState(userId);
+    // Build a deterministic idempotency key from user + intent + payload
+    const payloadKey = state.targetId || JSON.stringify(state.collectedFields || {});
+    const idempotencyKey = `ai:${userId}:${state.intent}:${payloadKey}`;
+
     let result;
-
-    switch (state.intent) {
-        case "CREATE_TRANSACTION":
-            result = await actionExecutor.executeCreateTransaction(userId, state.collectedFields);
-            break;
-        case "CREATE_BUDGET":
-            result = await actionExecutor.executeCreateBudget(userId, state.collectedFields);
-            break;
-        case "CREATE_CATEGORY":
-            result = await actionExecutor.executeCreateCategory(userId, state.collectedFields);
-            break;
-        case "DELETE_TRANSACTION":
-            result = await actionExecutor.executeDeleteTransaction(userId, state.targetId);
-            break;
-        case "UPDATE_TRANSACTION":
-            result = await actionExecutor.executeUpdateTransaction(userId, state.targetId, state.updates);
-            break;
-        case "DELETE_BUDGET":
-            result = await actionExecutor.executeDeleteBudget(userId, state.targetId);
-            break;
-        case "UPDATE_BUDGET":
-            result = await actionExecutor.executeUpdateBudget(userId, state.targetId, state.updates);
-            break;
-        case "DELETE_CATEGORY":
-            result = await actionExecutor.executeDeleteCategory(userId, state.targetId);
-            break;
-        case "UPDATE_CATEGORY":
-            result = await actionExecutor.executeUpdateCategory(userId, state.targetId, state.updates.newCategoryName);
-            break;
-        default:
-            return "Something went wrong. Please try again.";
+    try {
+        result = await idempotency.checkOrExecute(idempotencyKey, async () => {
+            switch (state.intent) {
+                case "CREATE_TRANSACTION":
+                    return await actionExecutor.executeCreateTransaction(userId, state.collectedFields);
+                case "CREATE_BUDGET":
+                    return await actionExecutor.executeCreateBudget(userId, state.collectedFields);
+                case "CREATE_CATEGORY":
+                    return await actionExecutor.executeCreateCategory(userId, state.collectedFields);
+                case "DELETE_TRANSACTION":
+                    return await actionExecutor.executeDeleteTransaction(userId, state.targetId);
+                case "UPDATE_TRANSACTION":
+                    return await actionExecutor.executeUpdateTransaction(userId, state.targetId, state.updates);
+                case "DELETE_BUDGET":
+                    return await actionExecutor.executeDeleteBudget(userId, state.targetId);
+                case "UPDATE_BUDGET":
+                    return await actionExecutor.executeUpdateBudget(userId, state.targetId, state.updates);
+                case "DELETE_CATEGORY":
+                    return await actionExecutor.executeDeleteCategory(userId, state.targetId);
+                case "UPDATE_CATEGORY":
+                    return await actionExecutor.executeUpdateCategory(userId, state.targetId, state.updates.newCategoryName);
+                default:
+                    return { success: false, message: "Something went wrong. Please try again." };
+            }
+        });
+    } catch (err) {
+        if (err.message && err.message.includes("Duplicate request")) {
+            logger.warn(`[chatbotService] Duplicate action blocked: ${idempotencyKey}`);
+            return {
+                responseType: "action_result",
+                success: true,
+                message: "This action was already processed. No duplicate was created.",
+                actionType: state.intent
+            };
+        }
+        logger.error(`[chatbotService] executeAction error: ${err.message}`);
+        return {
+            responseType: "action_result",
+            success: false,
+            message: "An error occurred while processing the action. Please try again.",
+            actionType: state.intent
+        };
     }
 
     if (result.success) {
@@ -562,20 +626,103 @@ async function executeAction(userId, state) {
     };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * Summarize older messages asynchronously in the background.
+ */
+async function triggerBackgroundSummarization(userId, conversationId) {
+    const threshold = 15;
+    const count = await ChatMessage.countDocuments({ session: conversationId });
+    if (count < threshold) return;
+
+    // Check if summarized recently (avoid redundant runs)
+    const summaryDoc = await ConversationSummary.findOne({ session: conversationId });
+    if (summaryDoc && (Date.now() - summaryDoc.updatedAt.getTime() < 180000)) {
+        return; // limit summarization frequency to once per 3 minutes
+    }
+
+    const messages = await ChatMessage.find({ session: conversationId })
+        .sort({ createdAt: 1 })
+        .limit(count - 5) // leave the last 5 messages intact
+        .lean();
+
+    if (messages.length === 0) return;
+
+    const summaryText = await geminiService.generateSummary(messages);
+    if (!summaryText) return;
+
+    if (summaryDoc) {
+        summaryDoc.summary = summaryText;
+        await summaryDoc.save();
+    } else {
+        await ConversationSummary.create({
+            user: userId,
+            session: conversationId,
+            summary: summaryText
+        });
+    }
+
+    logger.info(`[chatbotService] Compacted session ${conversationId} context with AI summary.`);
+}
+
+// ─── Helper Functions ────────────────────────────────────────────────────────
+function getRequiredFields(intent) {
+    switch (intent) {
+        case "CREATE_TRANSACTION":
+            return ["amount", "type", "categoryName"];
+        case "CREATE_BUDGET":
+            return ["categoryName", "budgetLimit"];
+        case "CREATE_CATEGORY":
+            return ["categoryNewName"];
+        default:
+            return [];
+    }
+}
+
+function generateFollowUpQuestion(missingFields, intent) {
+    if (!missingFields || missingFields.length === 0) return null;
+    const field = missingFields[0];
+    const questions = {
+        amount: "How much was the amount?",
+        type: "Is this an income or an expense?",
+        categoryName: "Which category should I file this under?",
+        description: "Any description for this transaction?",
+        budgetLimit: "What should be the budget limit amount?",
+        month: "Which month is this budget for?",
+        year: "Which year?",
+        categoryNewName: "What would you like to name the category?",
+        newAmount: "What is the new amount you'd like to set?",
+        newLimit: "What is the new budget limit you'd like to set?",
+        newDescription: "What is the new description?",
+        newCategoryName: "What is the new category name?",
+        categoryNewName: "What is the new category name?"
+    };
+    return questions[field] || `Could you provide the ${field}?`;
+}
 
 function mapEntitiesToFields(intent) {
     const e = intent.entities || {};
+    const intentName = intent.intent;
+    
+    if (intentName === "CREATE_BUDGET" || intentName === "UPDATE_BUDGET") {
+        return {
+            categoryName: e.categoryName || null,
+            budgetLimit: e.budgetLimit || e.amount || null,
+            month: e.month || null,
+            year: e.year || null
+        };
+    }
+    if (intentName === "CREATE_CATEGORY" || intentName === "UPDATE_CATEGORY") {
+        return {
+            categoryNewName: e.categoryNewName || e.newCategoryName || null
+        };
+    }
+    // Transaction
     return {
         amount: e.amount || null,
         type: e.type || null,
         categoryName: e.categoryName || null,
         description: e.description || null,
-        date: e.date || null,
-        budgetLimit: e.budgetLimit || e.amount || null,
-        month: e.month || null,
-        year: e.year || null,
-        categoryNewName: e.categoryNewName || null
+        date: e.date || null
     };
 }
 
@@ -606,7 +753,9 @@ function tryDirectFieldMapping(fieldName, message) {
         case "categoryName":
         case "newCategoryName":
         case "categoryNewName":
-            if (text.length <= 50 && text.length >= 1) result[fieldName] = text;
+            if (text.length <= 50 && text.length >= 1) {
+                result[fieldName] = cleanCategoryName(text);
+            }
             break;
         case "description":
         case "newDescription":
@@ -627,6 +776,32 @@ function tryDirectFieldMapping(fieldName, message) {
     }
 
     return result;
+}
+
+function getAllowedCreateFields(intent) {
+    if (intent === "CREATE_TRANSACTION") {
+        return ["amount", "type", "categoryName", "description", "date"];
+    }
+    if (intent === "CREATE_BUDGET") {
+        return ["categoryName", "budgetLimit", "month", "year"];
+    }
+    if (intent === "CREATE_CATEGORY") {
+        return ["categoryNewName"];
+    }
+    return [];
+}
+
+function getAllowedUpdateFields(intent) {
+    if (intent === "UPDATE_TRANSACTION") {
+        return ["newAmount", "newDescription", "newCategoryName", "newDate", "newType"];
+    }
+    if (intent === "UPDATE_BUDGET") {
+        return ["newLimit", "newMonth", "newYear"];
+    }
+    if (intent === "UPDATE_CATEGORY") {
+        return ["newCategoryName"];
+    }
+    return [];
 }
 
 function buildConfirmationResponse(state) {
@@ -709,41 +884,6 @@ function filterNull(obj) {
     return result;
 }
 
-// ─── Get History (unchanged from v1) ─────────────────────────────────────────
-
-exports.getHistory = async (req, res) => {
-    try {
-        const userId = req.user._id;
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const messageCount = await ChatMessage.countDocuments({
-            user: userId,
-            role: "user",
-            createdAt: { $gte: startOfMonth }
-        });
-
-        const history = await ChatMessage.find({ user: userId }).sort({ createdAt: 1 }).limit(50);
-        res.json({
-            success: true,
-            data: history,
-            isPro: req.user.isPro,
-            limit: 5,
-            used: messageCount,
-            remaining: Math.max(0, 5 - messageCount)
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error." });
-    }
-};
-
-// ─── Clear History (unchanged from v1) ───────────────────────────────────────
-
-exports.clearHistory = async (req, res) => {
-    try {
-        await ChatMessage.deleteMany({ user: req.user._id });
-        await conversationManager.clearState(req.user._id);
-        res.json({ success: true, message: "Chat history cleared successfully." });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server error." });
-    }
+module.exports = {
+    handleSessionMessage
 };

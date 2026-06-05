@@ -12,7 +12,7 @@ async function wipeTransactionDependentCaches(userId) {
     if (!userId) return;
     if (redis) {
         try {
-            const analyticsKeys = await redis.keys(`analytics:*:${userId}`);
+            const analyticsKeys = await redis.keys(`analytics:*:${userId}*`);
             const transactionKeys = await redis.keys(`transactions:${userId}:*`);
             const budgetKeys = await redis.keys(`checkBudgets:${userId}:*`);
             const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys];

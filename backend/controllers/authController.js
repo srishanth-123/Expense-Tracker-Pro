@@ -11,13 +11,22 @@ const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_DURATION_SECONDS = 15 * 60; // 15 minutes
 const PASSWORD_RESET_EXPIRY_MINUTES = 15;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 const sendTokenCookie = (res, token) => {
+    let maxAge = 24 * 60 * 60 * 1000; // 24 hours default
+    const expire = process.env.JWT_EXPIRE || "24h";
+    const num = parseInt(expire);
+    const unit = expire.slice(String(num).length);
+    if (!isNaN(num)) {
+        if (unit === 'h') maxAge = num * 60 * 60 * 1000;
+        else if (unit === 'd') maxAge = num * 24 * 60 * 60 * 1000;
+        else if (unit === 'm') maxAge = num * 60 * 1000;
+    }
+
     res.cookie("token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-        maxAge: 30 * 24 * 60 * 60 * 1000  // 30 days
+        maxAge
     });
 };
 
@@ -46,7 +55,15 @@ exports.registerUser = async (req, res) => {
         res.status(201).json({
             success: true,
             message: "User registered successfully",
-            data: { _id: user.id, name: user.name, email: user.email, token }
+            data: { 
+                _id: user.id, 
+                name: user.name, 
+                email: user.email, 
+                isPro: user.isPro, 
+                walletBalance: user.walletBalance, 
+                profilePic: user.profilePic || "",
+                token 
+            }
         });
     } catch (error) {
         logger.error("Registration error:", error);
@@ -114,7 +131,15 @@ exports.loginUser = async (req, res) => {
         res.json({
             success: true,
             message: "Login successful",
-            data: { _id: user.id, name: user.name, email: user.email, token }
+            data: { 
+                _id: user.id, 
+                name: user.name, 
+                email: user.email, 
+                isPro: user.isPro, 
+                walletBalance: user.walletBalance, 
+                profilePic: user.profilePic || "",
+                token 
+            }
         });
     } catch (error) {
         logger.error("Login error:", error);
@@ -210,13 +235,18 @@ exports.getMe = async (req, res) => {
 exports.searchUsers = async (req, res) => {
     try {
         const { query } = req.query;
-        if (!query) return res.json({ success: true, data: [] });
+        if (!query || !query.trim()) return res.json({ success: true, data: [] });
+
+        const cleanQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
         // Search by exact email or partial name (case insensitive), limit to 10
+        // Order by prefix matching first to utilize the database index.
         const users = await User.find({
             $or: [
-                { email: { $regex: query, $options: "i" } },
-                { name: { $regex: query, $options: "i" } }
+                { name: { $regex: `^${cleanQuery}`, $options: "i" } },
+                { email: { $regex: `^${cleanQuery}`, $options: "i" } },
+                { name: { $regex: cleanQuery, $options: "i" } },
+                { email: { $regex: cleanQuery, $options: "i" } }
             ],
             _id: { $ne: req.user._id } // Don't return the searcher themselves
         }).select("_id name email").limit(10);
@@ -225,5 +255,83 @@ exports.searchUsers = async (req, res) => {
     } catch (error) {
         logger.error("User search error:", error);
         res.status(500).json({ success: false, message: "Server error during search" });
+    }
+};
+
+// ─── Update Profile ───────────────────────────────────────────────────────────
+exports.updateProfile = async (req, res) => {
+    try {
+        const { name, email, profilePic } = req.body;
+        const userId = req.user._id;
+        const updateData = {};
+
+        // Validate name
+        if (name !== undefined) {
+            const trimmed = name.trim();
+            if (trimmed.length < 2 || trimmed.length > 50) {
+                return res.status(400).json({ success: false, message: "Name must be between 2 and 50 characters." });
+            }
+            updateData.name = trimmed;
+        }
+
+        // Validate email
+        if (email !== undefined) {
+            const trimmedEmail = email.trim().toLowerCase();
+            if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
+                return res.status(400).json({ success: false, message: "Please enter a valid email address." });
+            }
+            // Check for duplicate
+            const existing = await User.findOne({ email: trimmedEmail, _id: { $ne: userId } });
+            if (existing) {
+                return res.status(400).json({ success: false, message: "This email is already in use by another account." });
+            }
+            updateData.email = trimmedEmail;
+        }
+
+        // Validate profile picture (Base64 JPEG only)
+        if (profilePic !== undefined) {
+            if (profilePic === "") {
+                // Allow clearing the profile pic
+                updateData.profilePic = "";
+            } else {
+                if (!profilePic.startsWith("data:image/jpeg;base64,") && !profilePic.startsWith("data:image/jpg;base64,")) {
+                    return res.status(400).json({ success: false, message: "Only JPEG/JPG images are allowed." });
+                }
+                // Check size — limit to ~2MB base64 (~2.7M characters)
+                if (profilePic.length > 2700000) {
+                    return res.status(400).json({ success: false, message: "Image size must be less than 2MB." });
+                }
+                updateData.profilePic = profilePic;
+            }
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ success: false, message: "No valid fields to update." });
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(userId, updateData, { new: true, runValidators: true }).select("-password");
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, message: "User not found." });
+        }
+
+        // Send system notification for profile update
+        try {
+            const Notification = require("../models/notificationModel");
+            const { sendNotificationToUser } = require("../utils/socket");
+            const fields = Object.keys(updateData).filter(k => k !== "profilePic").join(", ");
+            const picChanged = updateData.profilePic !== undefined;
+            let msg = "Profile updated: ";
+            if (fields) msg += fields;
+            if (picChanged) msg += (fields ? " and " : "") + "profile picture";
+            msg += " changed successfully.";
+            const notif = await Notification.create({ user: userId, type: "SYSTEM", message: msg });
+            sendNotificationToUser(userId, notif);
+        } catch (_) {}
+
+        res.json({ success: true, message: "Profile updated successfully.", data: updatedUser });
+    } catch (error) {
+        logger.error("Update profile error:", error);
+        res.status(500).json({ success: false, message: "Server error during profile update." });
     }
 };

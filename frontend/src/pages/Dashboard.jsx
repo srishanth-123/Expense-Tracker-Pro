@@ -29,7 +29,7 @@ const relativeTime = (dateStr) => {
 // ── Animated Counter Component ───────────────────────────────────────────────
 const AnimatedCounter = ({ value, prefix = '₹' }) => {
   const spring = useSpring(0, { mass: 1, stiffness: 75, damping: 15 });
-  const display = useTransform(spring, (current) => 
+  const display = useTransform(spring, (current) =>
     `${prefix}${Math.round(current).toLocaleString('en-IN')}`
   );
 
@@ -82,7 +82,7 @@ const TransactionRow = ({ t }) => {
 const InsightCard = ({ insight, index }) => {
   const icons = ['💡', '📊', '⚠️', '🎯', '📈'];
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.1 }}
@@ -123,12 +123,12 @@ const Dashboard = () => {
       ]);
 
       setData({
-        summary:      summary.status      === 'fulfilled' ? summary.value      : null,
-        transactions: txns.status         === 'fulfilled' ? (Array.isArray(txns.value) ? txns.value : txns.value?.transactions || []) : [],
-        walletBalance:wallet.status       === 'fulfilled' ? (wallet.value?.balance ?? wallet.value ?? wallet.value?.walletBalance ?? 0) : 0,
-        insights:     insights.status     === 'fulfilled' ? (Array.isArray(insights.value) ? insights.value : insights.value?.insights || []) : [],
-        topExpenses:  topExp.status       === 'fulfilled' ? (Array.isArray(topExp.value) ? topExp.value : topExp.value?.topExpenses || []) : [],
-        prediction:   prediction.status   === 'fulfilled' ? prediction.value   : null,
+        summary: summary.status === 'fulfilled' ? summary.value : null,
+        transactions: txns.status === 'fulfilled' ? (Array.isArray(txns.value) ? txns.value : txns.value?.transactions || []) : [],
+        walletBalance: wallet.status === 'fulfilled' ? (wallet.value?.balance ?? wallet.value ?? wallet.value?.walletBalance ?? 0) : 0,
+        insights: insights.status === 'fulfilled' ? (Array.isArray(insights.value) ? insights.value : insights.value?.insights || []) : [],
+        topExpenses: topExp.status === 'fulfilled' ? (Array.isArray(topExp.value) ? topExp.value : topExp.value?.topExpenses || []) : [],
+        prediction: prediction.status === 'fulfilled' ? prediction.value : null,
       });
     } finally {
       setLoading(false);
@@ -147,12 +147,12 @@ const Dashboard = () => {
   }, []);
 
   const s = data.summary;
-  const totalIncome  = s?.totalIncome  ?? s?.income  ?? 0;
+  const totalIncome = s?.totalIncome ?? s?.income ?? 0;
   const totalExpense = s?.totalExpense ?? s?.expense ?? 0;
-  const net          = totalIncome - totalExpense;
-  const savingsRate  = totalIncome > 0 ? Math.round((net / totalIncome) * 100) : 0;
-  const budgetUsed   = totalIncome > 0 ? Math.min(Math.round((totalExpense / totalIncome) * 100), 100) : 0;
-  
+  const net = totalIncome - totalExpense;
+  const savingsRate = totalIncome > 0 ? Math.round((net / totalIncome) * 100) : 0;
+  const budgetUsed = totalIncome > 0 ? Math.min(Math.round((totalExpense / totalIncome) * 100), 100) : 0;
+
   // Use backend transaction counts if available, otherwise calculate from transactions array
   const incomeTxnCount = s?.incomeCount ?? data.transactions.filter(t => t.type === 'income').length;
   const expenseTxnCount = s?.expenseCount ?? data.transactions.filter(t => t.type === 'expense').length;
@@ -166,8 +166,8 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <SkeletonTheme 
-        baseColor={theme === 'dark' ? 'rgba(30, 41, 59, 0.5)' : 'rgba(0, 0, 0, 0.05)'} 
+      <SkeletonTheme
+        baseColor={theme === 'dark' ? 'rgba(30, 41, 59, 0.5)' : 'rgba(0, 0, 0, 0.05)'}
         highlightColor={theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.1)'}
       >
         <div className="dashboard">
@@ -241,7 +241,7 @@ const Dashboard = () => {
       {/* ── Budget Bar ── */}
       <Card padding="24px" className="dash-budget-bar-card">
         <div className="dash-budget-header">
-          <span>Monthly Budget Usage</span>
+          <span>Total Budget Usage</span>
           <span className={budgetUsed >= 90 ? 'danger' : budgetUsed >= 70 ? 'warning' : 'safe'}>
             {budgetUsed}% used
           </span>
@@ -304,7 +304,7 @@ const Dashboard = () => {
           {/* Prediction */}
           {data.prediction && (
             <div className="dash-prediction">
-              <p className="dash-prediction-label">📈 Predicted next month</p>
+              <p className="dash-prediction-label">📈 Predicted this month</p>
               <p className="dash-prediction-value">
                 <AnimatedCounter value={data.prediction?.predictedExpense ?? data.prediction?.prediction ?? data.prediction} />
               </p>

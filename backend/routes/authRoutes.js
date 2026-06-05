@@ -10,7 +10,8 @@ const {
     resetPassword,
     logoutUser,
     getMe,
-    searchUsers
+    searchUsers,
+    updateProfile
 } = require("../controllers/authController");
 
 const authMiddleware = require("../middleware/authMiddleware");
@@ -22,6 +23,7 @@ router.post("/reset-password/:token", authLimiter, resetPassword);
 router.post("/logout", logoutUser);
 router.get("/me", authMiddleware, getMe);
 router.get("/users", authMiddleware, searchUsers);
+router.put("/profile", authMiddleware, updateProfile);
 
 module.exports = router;
 

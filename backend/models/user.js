@@ -39,10 +39,16 @@ const userSchema = new mongoose.Schema(
         isPro: {
             type: Boolean,
             default: false
+        },
+        profilePic: {
+            type: String,
+            default: ""
         }
     },
     { timestamps: true }
 );
+
+userSchema.index({ name: 1 });
 
 // unique: true on email already creates an index — no need for explicit schema.index()
 

@@ -78,13 +78,19 @@ async function getUnusualDays(userId) {
 
 // ─── Snapshot builder ────────────────────────────────────────────────────────
 async function buildSnapshot(userId) {
+    const mongoose = require("mongoose");
+    const objUserId = typeof userId === "string" ? new mongoose.Types.ObjectId(userId) : userId;
+
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
     const [smart, topExpenses, categoryTrend, prediction, weekend, unusual] = await Promise.all([
-        analyticsService.getSmartInsights(userId),
-        analyticsService.getTopExpenses(userId, 5),
-        analyticsService.getCategoryTrend(userId),
-        analyticsService.getSpendingPrediction(userId),
-        getWeekendVsWeekday(userId),
-        getUnusualDays(userId),
+        analyticsService.getSmartInsights(objUserId),
+        analyticsService.getTopExpenses(objUserId, 5, currentMonthStart),
+        analyticsService.getCategoryTrend(objUserId),
+        analyticsService.getSpendingPrediction(objUserId),
+        getWeekendVsWeekday(objUserId),
+        getUnusualDays(objUserId),
     ]);
 
     // Compress category trend → last-month totals per category
@@ -104,13 +110,14 @@ async function buildSnapshot(userId) {
         currentMonthSpend: round(smart.currentTotal),
         previousMonthSpend: round(smart.prevTotal),
         monthOverMonthChangePct: changePct,
-        predictedNextMonth: round(prediction.predictedExpense),
+        predictedThisMonth: round(prediction.predictedExpense),
         topCategory,
         categoryTotals,
         topExpenses: topExpenses.slice(0, 5).map((e) => ({
             amount: round(e.amount),
             category: e.category,
             description: e.description,
+            date: e.date ? e.date.toISOString().split("T")[0] : null,
         })),
         weekendVsWeekday: weekend,
         unusualDays: unusual,
@@ -165,19 +172,19 @@ function generateRuleBasedInsights(snap) {
     }
 
     // 3. Budget risk via prediction
-    if (snap.predictedNextMonth > snap.currentMonthSpend * 1.1) {
+    if (snap.predictedThisMonth > snap.currentMonthSpend * 1.1) {
         insights.push({
             id: "budget-risk",
             title: "Budget Risk Ahead",
-            message: `Based on your 3-month average, next month's spend may reach ₹${snap.predictedNextMonth}. Plan ahead to avoid overshooting.`,
+            message: `Based on your 3-month average, this month's spend is projected to reach ₹${snap.predictedThisMonth}. Plan ahead to avoid overshooting.`,
             severity: "warning",
             icon: "alert-triangle",
         });
-    } else if (snap.predictedNextMonth > 0) {
+    } else if (snap.predictedThisMonth > 0) {
         insights.push({
             id: "budget-ok",
             title: "Predicted Spend",
-            message: `Next month's projected spend is ₹${snap.predictedNextMonth} — consistent with your recent pattern.`,
+            message: `This month's projected spend is ₹${snap.predictedThisMonth} — consistent with your recent pattern.`,
             severity: "info",
             icon: "target",
         });
@@ -245,7 +252,10 @@ Output STRICT JSON ONLY, no markdown, in this exact shape:
     }
   ]
 }
-Rules: never invent numbers, always reference real snapshot values, currency is INR (₹).`;
+Rules:
+- Never invent numbers, always reference real snapshot values.
+- Currency is INR (₹).
+- The value "predictedThisMonth" in the snapshot represents the predicted total expenses for the CURRENT/THIS month (based on historical averages). Do not refer to it as "next month's" prediction; always describe it as the prediction/projection for "this month".`;
 
 function parseLLMOutput(raw) {
     if (!raw || typeof raw !== "string") return null;

@@ -2,20 +2,27 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import { toast } from 'react-hot-toast';
+import api from '../api';
 
 const SocketContext = createContext();
 
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
-    const { user, token } = useAuth();
+    const { user } = useAuth();
     const [socket, setSocket] = useState(null);
     const [notifications, setNotifications] = useState([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [notificationsReady, setNotificationsReady] = useState(false);
 
     useEffect(() => {
+        const token = localStorage.getItem('token');
         if (user && token) {
-            const newSocket = io(import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000', {
+            const socketUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000')
+                .replace('/api/v1', '')
+                .replace('/api', '');
+            
+            const newSocket = io(socketUrl, {
                 auth: { token },
                 transports: ['websocket', 'polling']
             });
@@ -43,21 +50,19 @@ export const SocketProvider = ({ children }) => {
 
             return () => newSocket.close();
         }
-    }, [user, token]);
+    }, [user]);
 
     const fetchNotifications = async () => {
-        if (!token) return;
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1'}/notifications`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await res.json();
-            if (data.success) {
-                setNotifications(data.notifications);
-                setUnreadCount(data.unreadCount);
+            const res = await api.get('/notifications');
+            if (res && res.success) {
+                setNotifications(res.notifications || []);
+                setUnreadCount(res.unreadCount || 0);
             }
         } catch (error) {
             console.error("Failed to fetch notifications", error);
+        } finally {
+            setNotificationsReady(true);
         }
     };
 
@@ -67,11 +72,8 @@ export const SocketProvider = ({ children }) => {
 
     const markAsRead = async (id) => {
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1'}/notifications/${id}/read`, {
-                method: 'PATCH',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
+            const res = await api.patch(`/notifications/${id}/read`);
+            if (res && res.success) {
                 setNotifications(prev => prev.map(n => n._id === id ? { ...n, read: true } : n));
                 setUnreadCount(prev => Math.max(0, prev - 1));
             }
@@ -82,11 +84,8 @@ export const SocketProvider = ({ children }) => {
 
     const markAllAsRead = async () => {
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1'}/notifications/read-all`, {
-                method: 'PATCH',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
+            const res = await api.patch('/notifications/read-all');
+            if (res && res.success) {
                 setNotifications(prev => prev.map(n => ({ ...n, read: true })));
                 setUnreadCount(0);
             }
@@ -96,8 +95,9 @@ export const SocketProvider = ({ children }) => {
     };
 
     return (
-        <SocketContext.Provider value={{ socket, notifications, unreadCount, markAsRead, markAllAsRead, fetchNotifications }}>
+        <SocketContext.Provider value={{ socket, notifications, unreadCount, notificationsReady, markAsRead, markAllAsRead, fetchNotifications }}>
             {children}
         </SocketContext.Provider>
     );
 };
+
