@@ -1,40 +1,72 @@
-import React from 'react';
 import { useSocket } from '../../context/SocketContext';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Bell } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 const NotificationDropdown = () => {
-    const { unreadCount } = useSocket();
+    const { unreadCount } = useSocket() || {};
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const isOnNotifications = location.pathname === '/notifications';
+
+    const handleClick = () => {
+        if (isOnNotifications) {
+            // Go back to previous page
+            navigate(-1);
+        } else {
+            navigate('/notifications');
+        }
+    };
 
     return (
-        <Link 
-            to="/notifications"
-            className="relative p-2 rounded-full hover:bg-white/10 transition-colors focus:outline-none focus:ring-2 focus:ring-primary flex items-center justify-center"
-            title="Notifications"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        <button
+            onClick={handleClick}
+            style={{
+                background: isOnNotifications ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+                border: 'none',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                padding: '8px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.2s ease',
+                position: 'relative'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = isOnNotifications ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.08)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = isOnNotifications ? 'rgba(99, 102, 241, 0.12)' : 'transparent'}
+            title={isOnNotifications ? 'Close Notifications' : 'Notifications'}
         >
-            <Bell size={20} style={{ color: 'var(--text-primary)' }} />
+            <Bell size={20} />
             {unreadCount > 0 && (
-                <motion.span 
+                <motion.span
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
-                    className="absolute top-0 right-0 inline-flex items-center justify-center text-xs font-bold leading-none text-white bg-red-500 rounded-full"
-                    style={{ 
-                        fontSize: '0.65rem', 
-                        minWidth: '16px', 
-                        height: '16px', 
+                    style={{
+                        position: 'absolute',
+                        top: '2px',
+                        right: '2px',
+                        fontSize: '0.6rem',
+                        minWidth: '16px',
+                        height: '16px',
                         padding: '0 4px',
-                        transform: 'translate(25%, -25%)',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        background: '#ef4444',
+                        color: 'white',
+                        borderRadius: '10px',
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        boxShadow: '0 0 6px rgba(239, 68, 68, 0.4)'
                     }}
                 >
                     {unreadCount > 99 ? '99+' : unreadCount}
                 </motion.span>
             )}
-        </Link>
+        </button>
     );
 };
 

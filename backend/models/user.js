@@ -40,9 +40,39 @@ const userSchema = new mongoose.Schema(
             type: Boolean,
             default: false
         },
+        plan: {
+            type: String,
+            enum: ["FREE", "PRO"],
+            default: "FREE"
+        },
+        subscriptionStatus: {
+            type: String,
+            enum: ["ACTIVE", "EXPIRED", "CANCELLED"],
+            default: "EXPIRED"
+        },
+        subscriptionStartDate: {
+            type: Date,
+            default: null
+        },
+        subscriptionEndDate: {
+            type: Date,
+            default: null
+        },
+        lastPaymentId: {
+            type: String,
+            default: null
+        },
         profilePic: {
             type: String,
             default: ""
+        },
+        passwordResetToken: {
+            type: String,
+            default: null
+        },
+        passwordResetExpires: {
+            type: Date,
+            default: null
         }
     },
     { timestamps: true }
@@ -51,6 +81,25 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ name: 1 });
 
 // unique: true on email already creates an index — no need for explicit schema.index()
+
+// Pre-save hook to keep `isPro` backwards compatible
+userSchema.pre("save", function() {
+    if (this.plan === "PRO" && this.subscriptionStatus === "ACTIVE") {
+        this.isPro = true;
+    } else if (this.isPro === true) {
+        this.plan = "PRO";
+        this.subscriptionStatus = "ACTIVE";
+        if (!this.subscriptionEndDate) {
+            const farFuture = new Date();
+            farFuture.setFullYear(farFuture.getFullYear() + 10);
+            this.subscriptionEndDate = farFuture;
+        }
+    } else {
+        this.isPro = false;
+        this.plan = "FREE";
+        this.subscriptionStatus = "EXPIRED";
+    }
+});
 
 module.exports = mongoose.model("User", userSchema);
 

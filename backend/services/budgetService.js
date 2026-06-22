@@ -4,6 +4,7 @@ const Transaction = require("../models/Transaction");
 const Notification = require("../models/notificationModel");
 const redis = require("../config/redis");
 const { sendNotificationToUser } = require("../utils/socket");
+const { markFinancialDataChanged } = require("../utils/cacheHelpers");
 
 /**
  * Budget Service
@@ -43,6 +44,7 @@ function getBudgetStatus(percentage, warningThreshold = 80) {
 }
 
 async function invalidateBudgetCache(userId) {
+    await markFinancialDataChanged(userId);
     if (!redis) return;
     try {
         await redis.del(`budgets:${userId}`);
@@ -72,8 +74,8 @@ async function computeCategorySpend(userId, categoryId, month, year) {
                 type: "expense",
                 isDeleted: false,
                 date: {
-                    $gte: new Date(year, month - 1, 1),
-                    $lte: new Date(year, month, 0, 23, 59, 59, 999)
+                    $gte: new Date(Date.UTC(year, month - 1, 1)),
+                    $lte: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
                 }
             }
         },
@@ -164,8 +166,8 @@ async function syncBudgetForTransaction(userId, categoryId, date) {
     try {
         if (!userId || !categoryId || !date) return;
         const d = new Date(date);
-        const month = d.getMonth() + 1;
-        const year = d.getFullYear();
+        const month = d.getUTCMonth() + 1;
+        const year = d.getUTCFullYear();
 
         const budget = await Budget.findOne({
             user: toId(userId),
@@ -193,7 +195,7 @@ async function syncBudgetsForTransactionChange(userId, oldCategory, oldDate, new
     const add = (cat, date) => {
         if (!cat || !date) return;
         const d = new Date(date);
-        buckets.set(`${cat.toString()}-${d.getMonth() + 1}-${d.getFullYear()}`, { cat, date: d });
+        buckets.set(`${cat.toString()}-${d.getUTCMonth() + 1}-${d.getUTCFullYear()}`, { cat, date: d });
     };
     add(oldCategory, oldDate);
     add(newCategory, newDate);

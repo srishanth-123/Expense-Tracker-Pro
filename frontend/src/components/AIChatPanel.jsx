@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import { useState, useEffect, useRef, useContext } from 'react';
 import { 
-  Send, X, ArrowUpRight, MessageSquare, 
+  Send, X, ArrowUpRight, 
   TrendingUp, PieChart, Folder, AlertTriangle, CheckCircle, Bot, Zap
 } from 'lucide-react';
 import { useChat } from '../hooks/chat/useChat';
@@ -13,7 +13,7 @@ const parseContent = (content) => {
     if (typeof content === 'string' && (content.startsWith('{') || content.startsWith('['))) {
       return JSON.parse(content);
     }
-  } catch (e) {
+  } catch {
     // raw string
   }
   return null;
@@ -355,7 +355,7 @@ const AIChatPanel = ({ onClose }) => {
                     loading={loading}
                   />
                   <div className="fp-msg-time">
-                    {new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
               </div>

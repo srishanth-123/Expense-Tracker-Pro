@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useSpring, useTransform } from 'framer-motion';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
@@ -136,15 +136,28 @@ const Dashboard = () => {
     }
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  const userId = user?._id;
 
   useEffect(() => {
-    const handleUpdate = () => {
+    if (userId) {
       fetchAll();
+    }
+  }, [userId]);
+
+  const updateTimer = useRef(null);
+  useEffect(() => {
+    const handleUpdate = () => {
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+      updateTimer.current = setTimeout(() => {
+        if (userId) fetchAll(true);
+      }, 600);
     };
     window.addEventListener('financialDataUpdated', handleUpdate);
-    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
-  }, []);
+    return () => {
+      window.removeEventListener('financialDataUpdated', handleUpdate);
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+    };
+  }, [userId]);
 
   const s = data.summary;
   const totalIncome = s?.totalIncome ?? s?.income ?? 0;
@@ -155,7 +168,6 @@ const Dashboard = () => {
 
   // Use backend transaction counts if available, otherwise calculate from transactions array
   const incomeTxnCount = s?.incomeCount ?? data.transactions.filter(t => t.type === 'income').length;
-  const expenseTxnCount = s?.expenseCount ?? data.transactions.filter(t => t.type === 'expense').length;
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -304,7 +316,7 @@ const Dashboard = () => {
           {/* Prediction */}
           {data.prediction && (
             <div className="dash-prediction">
-              <p className="dash-prediction-label">📈 Predicted this month</p>
+              <p className="dash-prediction-label">📈 Projected Outflow</p>
               <p className="dash-prediction-value">
                 <AnimatedCounter value={data.prediction?.predictedExpense ?? data.prediction?.prediction ?? data.prediction} />
               </p>

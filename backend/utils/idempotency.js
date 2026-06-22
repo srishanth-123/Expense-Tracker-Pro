@@ -39,8 +39,13 @@ class IdempotencyHandler {
             // Await full native execution
             const responseData = await executeLogic();
             
-            // Rewrite lock to successful output
-            await redis.set(redisKey, JSON.stringify({ status: "COMPLETED", response: responseData }), { ex: this.ttl });
+            // If the response indicates failure, do not cache the completed status
+            if (responseData && responseData.success === false) {
+                await redis.del(redisKey);
+            } else {
+                // Rewrite lock to successful output
+                await redis.set(redisKey, JSON.stringify({ status: "COMPLETED", response: responseData }), { ex: this.ttl });
+            }
             return responseData;
 
         } catch (error) {

@@ -1,7 +1,19 @@
 import { useState, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { Wallet, LogIn } from 'lucide-react';
+import { Wallet, LogIn, UserPlus } from 'lucide-react';
+
+const inputStyle = {
+  width: '100%',
+  background: 'rgba(10, 12, 20, 0.85)',
+  border: '1px solid rgba(255, 255, 255, 0.12)',
+  borderRadius: '10px',
+  padding: '12px',
+  color: '#ffffff',
+  fontSize: '0.95rem',
+  outline: 'none',
+  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+};
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -12,6 +24,10 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!email.toLowerCase().endsWith('@gmail.com')) {
+      setError('Only Gmail addresses (@gmail.com) are allowed.');
+      return;
+    }
     try {
       await login(email, password);
       navigate('/');
@@ -21,38 +37,119 @@ const Login = () => {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: '400px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+    <div style={{ 
+      display: 'flex', 
+      minHeight: '100vh', 
+      alignItems: 'center', 
+      justifyContent: 'center',
+      background: 'linear-gradient(135deg, rgba(15, 17, 26, 0.3) 0%, rgba(10, 10, 15, 0.4) 100%), url("/auth_background.png") no-repeat center center / cover',
+      padding: '24px',
+      position: 'relative'
+    }}>
+      <div className="glass-card animate-fade-in" style={{ 
+        width: '100%', 
+        maxWidth: '440px',
+        background: 'rgba(15, 17, 28, 0.75)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 20px 50px rgba(0, 0, 0, 0.5)',
+        borderRadius: '20px',
+        padding: '40px'
+      }}>
+        {/* Login / Sign Up Toggle Buttons */}
+        <div style={{
+          display: 'flex',
+          background: 'rgba(255, 255, 255, 0.06)',
+          borderRadius: '12px',
+          padding: '4px',
+          marginBottom: '28px',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+        }}>
+          <button
+            style={{
+              flex: 1,
+              padding: '10px 0',
+              borderRadius: '10px',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: 'linear-gradient(135deg, var(--primary), #818cf8)',
+              color: '#fff',
+              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <LogIn size={16} /> Login
+          </button>
+          <Link
+            to="/register"
+            style={{
+              flex: 1,
+              padding: '10px 0',
+              borderRadius: '10px',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: 'transparent',
+              color: 'rgba(255, 255, 255, 0.5)',
+              textDecoration: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <UserPlus size={16} /> Sign Up
+          </Link>
+        </div>
+
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-            <div style={{ background: 'rgba(99, 102, 241, 0.2)', padding: '16px', borderRadius: '50%' }}>
+            <div style={{ background: 'rgba(99, 102, 241, 0.15)', padding: '16px', borderRadius: '50%', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
               <Wallet size={32} color="var(--primary)" />
             </div>
           </div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Welcome Back</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '4px' }}>Sign in to continue to ExpenseTracker</p>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 700, letterSpacing: '-0.025em', color: '#fff' }}>Welcome Back</h1>
+          <p style={{ color: 'rgba(255, 255, 255, 0.55)', fontSize: '0.88rem', marginTop: '6px' }}>Sign in to continue to ExpenseTracker Pro</p>
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--danger)', padding: '12px', borderRadius: '8px', color: 'var(--danger)', marginBottom: '20px', fontSize: '0.9rem' }}>
+          <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.35)', padding: '12px', borderRadius: '8px', color: '#ef4444', marginBottom: '20px', fontSize: '0.85rem' }}>
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
-            <label>Email Address</label>
+            <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'rgba(255, 255, 255, 0.6)', display: 'block', marginBottom: '6px' }}>Email Address (Gmail only)</label>
             <input 
               type="email" 
-              placeholder="you@example.com" 
+              placeholder="you@gmail.com" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="new-email"
               required 
+              style={inputStyle}
+              onFocus={(e) => {
+                e.target.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                e.target.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+                e.target.style.boxShadow = 'none';
+              }}
             />
           </div>
           <div>
-            <label>Password</label>
+            <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'rgba(255, 255, 255, 0.6)', display: 'block', marginBottom: '6px' }}>Password</label>
             <input 
               type="password" 
               placeholder="••••••••" 
@@ -60,19 +157,28 @@ const Login = () => {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               required 
+              style={inputStyle}
+              onFocus={(e) => {
+                e.target.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                e.target.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+                e.target.style.boxShadow = 'none';
+              }}
             />
           </div>
-          <div style={{ textAlign: 'right', marginTop: '-12px' }}>
+          <div style={{ textAlign: 'right', marginTop: '-10px' }}>
             <Link to="/forgot-password" style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: '0.85rem', fontWeight: 500 }}>
               Forgot password?
             </Link>
           </div>
-          <button type="submit" className="btn" style={{ marginTop: '8px' }}>
+          <button type="submit" className="btn" style={{ marginTop: '8px', padding: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 600, fontSize: '0.95rem' }}>
             <LogIn size={18} /> Sign In
           </button>
         </form>
 
-        <p style={{ textAlign: 'center', marginTop: '24px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+        <p style={{ textAlign: 'center', marginTop: '28px', fontSize: '0.88rem', color: 'rgba(255, 255, 255, 0.5)' }}>
           Don't have an account? <Link to="/register" style={{ color: 'var(--primary)', textDecoration: 'none', fontWeight: 500 }}>Create one</Link>
         </p>
       </div>

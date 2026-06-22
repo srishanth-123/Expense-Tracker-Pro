@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Wallet, TrendingDown, PiggyBank, AlertTriangle } from 'lucide-react';
 import Card from '../ui/Card';

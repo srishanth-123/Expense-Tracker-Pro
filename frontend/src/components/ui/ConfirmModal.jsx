@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, X } from 'lucide-react';
 import Button from './Button';
@@ -9,6 +9,7 @@ const ConfirmModal = ({
   onConfirm,
   title = "Are you sure?",
   message = "This action cannot be undone.",
+  children,
   confirmText = "Confirm",
   cancelText = "Cancel",
   isDanger = true,
@@ -28,10 +29,10 @@ const ConfirmModal = ({
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !loading && onClose()}>
       <div 
         className="modal-content"
-        style={{ maxWidth: '400px', margin: 'auto' }}
+        style={{ maxWidth: '420px', margin: 'auto' }}
       >
         <div className="modal-header" style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -50,9 +51,15 @@ const ConfirmModal = ({
           </button>
         </div>
 
-        <p style={{ color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: 1.5 }}>
+        <div style={{ color: 'var(--text-secondary)', marginBottom: '24px', lineHeight: 1.5 }}>
           {message}
-        </p>
+        </div>
+
+        {children && (
+          <div style={{ marginBottom: '24px' }}>
+            {children}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
           <Button variant="secondary" onClick={onClose} disabled={loading}>

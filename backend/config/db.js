@@ -11,6 +11,30 @@ const connectDB = async () => {
             socketTimeoutMS: 45000,           // Close stale sockets after 45s
         });
         logger.info("MongoDB connected (pool: 5-20)");
+
+        // ─── Legacy Pro Migration ──────────────────────────────────
+        try {
+            const User = require("../models/user");
+            const farFuture = new Date();
+            farFuture.setFullYear(farFuture.getFullYear() + 10);
+            
+            const result = await User.updateMany(
+                { isPro: true, $or: [{ plan: { $ne: "PRO" } }, { subscriptionStatus: { $ne: "ACTIVE" } }] },
+                { 
+                    $set: { 
+                        plan: "PRO", 
+                        subscriptionStatus: "ACTIVE",
+                        subscriptionStartDate: new Date(),
+                        subscriptionEndDate: farFuture 
+                    } 
+                }
+            );
+            if (result.modifiedCount > 0) {
+                logger.info(`Migrated ${result.modifiedCount} legacy Pro users to the new subscription schema.`);
+            }
+        } catch (migError) {
+            logger.error("Error migrating legacy Pro users:", migError.message);
+        }
     } catch (error) {
         logger.error("MongoDB connection failed:", error.message);
         process.exit(1);

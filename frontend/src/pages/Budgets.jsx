@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
@@ -34,9 +34,9 @@ const Budgets = () => {
   const [confirm, setConfirm] = useState({ open: false, budget: null });
   const [deleting, setDeleting] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [allBudgets, summaryRes, cats] = await Promise.all([
         budgetApi.getBudgets(),
         budgetApi.getBudgetSummary(month, year),
@@ -51,7 +51,7 @@ const Budgets = () => {
     } catch (err) {
       toast.error(err.message || 'Failed to load budgets');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [month, year]);
 
@@ -59,12 +59,19 @@ const Budgets = () => {
     fetchData();
   }, [fetchData]);
 
+  const updateTimer = useRef(null);
   useEffect(() => {
     const handleUpdate = () => {
-      fetchData();
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+      updateTimer.current = setTimeout(() => {
+        fetchData(true);
+      }, 600);
     };
     window.addEventListener('financialDataUpdated', handleUpdate);
-    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
+    return () => {
+      window.removeEventListener('financialDataUpdated', handleUpdate);
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+    };
   }, [fetchData]);
 
   const changeMonth = (dir) => {
@@ -92,9 +99,14 @@ const Budgets = () => {
       setFormOpen(false);
       setEditing(null);
       // Jump to the month/year of the saved budget so it is visible.
-      setMonth(Number(payload.month));
-      setYear(Number(payload.year));
-      fetchData();
+      const newMonth = Number(payload.month);
+      const newYear = Number(payload.year);
+      if (newMonth === month && newYear === year) {
+        fetchData();
+      } else {
+        setMonth(newMonth);
+        setYear(newYear);
+      }
     } catch (err) {
       const msg = err.response?.data?.message || err.message || 'Failed to save budget';
       toast.error(msg);

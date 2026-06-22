@@ -2,6 +2,7 @@ const Category=require("../models/category");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const { normalizeCategoryName } = require("../utils/categoryNormalizer");
+const { markFinancialDataChanged } = require("../utils/cacheHelpers");
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -29,6 +30,7 @@ exports.createCategory=async(req,res)=>{
                 await existingCategory.save();
 
                 invalidateUserSearchCache(req.user._id);
+                await markFinancialDataChanged(req.user._id);
 
                 if (redis) {
                     try {
@@ -51,6 +53,7 @@ exports.createCategory=async(req,res)=>{
         });
 
         invalidateUserSearchCache(req.user._id);
+        await markFinancialDataChanged(req.user._id);
 
         if (redis) {
             try {
@@ -128,6 +131,7 @@ exports.deleteCategory = async (req, res) => {
     }
 
     invalidateUserSearchCache(req.user.id);
+    await markFinancialDataChanged(req.user.id);
 
     if (redis) {
         try {
@@ -165,6 +169,7 @@ exports.restoreCategory = async (req, res) => {
     await category.save();
 
     invalidateUserSearchCache(req.user.id);
+    await markFinancialDataChanged(req.user.id);
 
     if (redis) {
         try {
@@ -213,6 +218,7 @@ exports.updateCategory = async (req, res) => {
     await category.save();
 
     invalidateUserSearchCache(req.user._id);
+    await markFinancialDataChanged(req.user._id);
 
     if (redis) {
       try {

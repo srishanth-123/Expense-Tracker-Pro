@@ -4,23 +4,25 @@ const Payment = require("../models/Payment");
 const User = require("../models/user");
 const idempotencyHandler = require("../utils/idempotency");
 const sagaService = require("../services/saga.service");
-const Notification = require("../models/notificationModel");
-const { sendNotificationToUser } = require("../utils/socket");
 const { sendPaymentSuccessEmail } = require("../services/emailService");
+const logger = require("../utils/logger");
 
-// Note: Ensure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are in .env
+// RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are validated as required at startup
+// (see config/envValidation.js), so no insecure fallback defaults are used here.
 const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID || "test_key",
-    key_secret: process.env.RAZORPAY_KEY_SECRET || "test_secret"
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
 exports.createOrder = async (req, res) => {
     try {
-        const { amount } = req.body;
+        const { amount, purpose } = req.body;
 
         if (!amount || isNaN(amount) || amount <= 0) {
             return res.status(400).json({success: false, message: "Invalid request data"});
         }
+
+        const validPurpose = purpose === "subscription" ? "subscription" : "wallet_topup";
 
         const options = {
             amount: Math.round(amount * 100), // amount in the smallest currency unit (paise)
@@ -35,7 +37,8 @@ exports.createOrder = async (req, res) => {
             user: req.user._id,
             amount: amount,
             orderId: order.id,
-            status: "pending"
+            status: "pending",
+            purpose: validPurpose
         });
 
         res.status(201).json({
@@ -62,7 +65,7 @@ exports.verifyPayment = async (req, res) => {
             return res.status(400).json({success: false, message: "Invalid request data"});
         }
 
-        const secret = process.env.RAZORPAY_KEY_SECRET || "test_secret";
+        const secret = process.env.RAZORPAY_KEY_SECRET;
         
         // Generate cryptographic signature to verify authenticity
         const body = razorpay_order_id + "|" + razorpay_payment_id;
@@ -96,19 +99,21 @@ exports.verifyPayment = async (req, res) => {
         
         try {
             await idempotencyHandler.checkOrExecute(idempotencyKey, async () => {
-                await sagaService.runWalletTopupSaga(
-                    paymentDoc.user,
-                    amountInRupees,
-                    razorpay_order_id,
-                    razorpay_payment_id
-                );
-
-                const notification = await Notification.create({
-                    user: paymentDoc.user,
-                    type: "WALLET_TOPUP",
-                    message: `Successfully topped up ₹${amountInRupees} to your wallet.`
-                });
-                sendNotificationToUser(paymentDoc.user, notification);
+                if (paymentDoc.purpose === "subscription") {
+                    await sagaService.runProSubscriptionUpgradeSaga(
+                        paymentDoc.user,
+                        amountInRupees,
+                        'razorpay',
+                        razorpay_payment_id
+                    );
+                } else {
+                    await sagaService.runWalletTopupSaga(
+                        paymentDoc.user,
+                        amountInRupees,
+                        razorpay_order_id,
+                        razorpay_payment_id
+                    );
+                }
 
                 const user = await User.findById(paymentDoc.user).select("name email walletBalance");
                 if (user) {
@@ -122,16 +127,16 @@ exports.verifyPayment = async (req, res) => {
             });
         } catch (sagaError) {
             if (sagaError.message.includes("Duplicate request")) {
-                console.log(`[IDEMPOTENCY] Blocked duplicate verification for payment ${razorpay_payment_id}`);
+                logger.info(`[IDEMPOTENCY] Blocked duplicate verification for payment ${razorpay_payment_id}`);
             } else {
-                console.error("[VERIFY SAGA ERROR]", sagaError);
+                logger.error("[VERIFY SAGA ERROR]", sagaError);
                 throw sagaError;
             }
         }
 
         res.status(200).json({ success: true, message: "Payment verified successfully", data: { status: "success" } });
     } catch (error) {
-        console.error("Payment verification error:", error);
+        logger.error("Payment verification error:", error);
         res.status(500).json({success: false, message: "Server error"});
     }
 };
@@ -169,3 +174,84 @@ exports.subscribePro = async (req, res) => {
         res.status(500).json({ success: false, message: error.message || "Server error during Pro upgrade" });
     }
 };
+
+const cleanReason = (reason) => {
+    if (!reason) return "Payment failed";
+    const lower = reason.toLowerCase();
+    if (lower.includes("declined by the bank") || lower.includes("declined by bank")) {
+        return "Declined by bank";
+    }
+    if (lower.includes("cancelled") || lower.includes("dismissed")) {
+        return "Cancelled by user";
+    }
+    if (lower.includes("bad credentials") || lower.includes("authentication failed")) {
+        return "Authentication failed";
+    }
+    if (lower.includes("network") || lower.includes("timeout")) {
+        return "Network timeout";
+    }
+    if (lower.includes("insufficient funds") || lower.includes("insufficient balance")) {
+        return "Insufficient funds";
+    }
+    if (lower.includes("expired")) {
+        return "Payment link expired";
+    }
+    
+    const firstSentence = reason.split(/[.,;!]/)[0].trim();
+    if (firstSentence.length > 0 && firstSentence.length < 50) {
+        return firstSentence;
+    }
+    return reason.length > 40 ? reason.substring(0, 37) + "..." : reason;
+};
+
+exports.failPayment = async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, reason } = req.body;
+
+        if (!razorpay_order_id) {
+            return res.status(400).json({ success: false, message: "Order ID is required" });
+        }
+
+        const paymentDoc = await Payment.findOne({ orderId: razorpay_order_id });
+
+        if (!paymentDoc) {
+            return res.status(404).json({ success: false, message: "Payment record not found" });
+        }
+
+        // Only update if it is not already resolved
+        if (paymentDoc.status === "pending") {
+            paymentDoc.status = "failed";
+            if (razorpay_payment_id) {
+                paymentDoc.paymentId = razorpay_payment_id;
+            }
+            await paymentDoc.save();
+        }
+
+        // Create failed WalletTransaction entry
+        const WalletTransaction = require("../models/WalletTransaction");
+        const refId = razorpay_payment_id || `FAIL-${razorpay_order_id}`;
+        const existingTx = await WalletTransaction.findOne({ referenceId: refId });
+        
+        if (!existingTx) {
+            const cleanedReason = cleanReason(reason);
+            await WalletTransaction.create({
+                user: paymentDoc.user,
+                type: paymentDoc.purpose === "subscription" ? "debit" : "credit",
+                amount: paymentDoc.amount,
+                source: paymentDoc.purpose === "subscription" ? "subscription" : "topup",
+                status: "failed",
+                referenceId: refId,
+                description: paymentDoc.purpose === "subscription" 
+                    ? `Failed subscription upgrade: ${cleanedReason}`
+                    : `Failed wallet top-up: ${cleanedReason}`
+            });
+            logger.info(`[PAYMENT_FAILED] Logged failed payment transaction for order ${razorpay_order_id}`);
+        }
+
+        res.status(200).json({ success: true, message: "Payment failure recorded" });
+    } catch (error) {
+        logger.error("Recording payment failure error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+

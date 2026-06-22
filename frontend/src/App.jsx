@@ -6,13 +6,16 @@ import { ThemeProvider } from './context/ThemeContext';
 import { SocketProvider } from './context/SocketContext';
 import { ChatProvider } from './context/ChatContext';
 import Layout from './components/Layout';
+import { useNumericInputScrollFix } from './hooks/useNumericInputScrollFix';
 
-// Lazy loading pages
-const Login = React.lazy(() => import('./pages/Login'));
-const Register = React.lazy(() => import('./pages/Register'));
+// Eagerly loaded primary pages for instant rendering
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+
+// Lazy loading remaining sub-pages
 const ForgotPassword = React.lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = React.lazy(() => import('./pages/ResetPassword'));
-const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 const Transactions = React.lazy(() => import('./pages/Transactions'));
 const Splits = React.lazy(() => import('./pages/Splits'));
 const Analytics = React.lazy(() => import('./pages/Analytics'));
@@ -71,6 +74,7 @@ const AppRoutes = () => {
 };
 
 function App() {
+  useNumericInputScrollFix();
   return (
     <BrowserRouter>
       <ThemeProvider>

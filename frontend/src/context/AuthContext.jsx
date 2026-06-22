@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useState, useEffect, useContext } from 'react';
+import { createContext, useState, useEffect, useContext, useRef, useCallback } from 'react';
 import api from '../api';
 
 export const AuthContext = createContext();
@@ -15,6 +15,7 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const refreshTimer = useRef(null);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -52,14 +53,14 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       await api.post('/auth/logout'); // Clears HttpOnly cookie server-side
-    } catch (_) {
+    } catch {
       // Ignore logout errors — clear client state regardless
     }
     localStorage.removeItem('token');
     setUser(null);
   };
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (token) {
       try {
@@ -69,7 +70,23 @@ export const AuthProvider = ({ children }) => {
         console.error("Failed to refresh user data:", error);
       }
     }
-  };
+  }, []);
+
+  // Debounced listener — coalesces rapid-fire financialDataUpdated events
+  // into a single refreshUser() call (500ms debounce window)
+  useEffect(() => {
+    const handleFinancialUpdate = () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
+        refreshUser();
+      }, 500);
+    };
+    window.addEventListener('financialDataUpdated', handleFinancialUpdate);
+    return () => {
+      window.removeEventListener('financialDataUpdated', handleFinancialUpdate);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, [refreshUser]);
 
   return (
     <AuthContext.Provider value={{ user, login, register, logout, loading, setUser, refreshUser }}>

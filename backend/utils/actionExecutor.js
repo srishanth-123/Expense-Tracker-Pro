@@ -6,11 +6,11 @@
  * CRITICAL DESIGN:
  *   The AI NEVER writes to MongoDB directly. Every mutation goes through the
  *   same validation and side-effect pipeline as the normal API controllers:
- *   - Transaction creation → trie update, cache wipe, budget sync
+ *   - Transaction creation → search cache invalidation, cache wipe, budget sync
  *   - Budget creation     → evaluate spend, cache invalidation
- *   - Category creation   → trie insert, cache invalidation
+ *   - Category creation   → search cache invalidation, cache invalidation
  *
- *   This guarantees that wallet balances, budgets, search indexes, caches,
+ *   This guarantees that wallet balances, budgets, caches,
  *   and notifications remain consistent regardless of whether the action
  *   was initiated by the UI or the AI assistant.
  */
@@ -23,8 +23,11 @@ const User = require("../models/user");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const budgetService = require("../services/budgetService");
+const sagaService = require("../services/saga.service");
+const MoneyRequest = require("../models/MoneyRequest");
 const { normalizeCategoryName } = require("./categoryNormalizer");
 const analyticsService = require("../services/analytics.service");
+const aiInsightsService = require("../services/aiInsightsService");
 const logger = require("./logger");
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -50,22 +53,19 @@ function escapeRegex(str) {
 }
 
 /**
- * Wipe transaction-dependent caches (same logic as transactionController).
+ * Bump the user's financial-version counter so version-based caches
+ * are lazily invalidated on next read.  No redis.keys() scan needed.
  */
-async function wipeTransactionCaches(userId) {
-    if (!redis) return;
-    try {
-        const analyticsKeys = await redis.keys(`analytics:*:${userId}*`);
-        const transactionKeys = await redis.keys(`transactions:${userId}:*`);
-        const budgetKeys = await redis.keys(`checkBudgets:${userId}:*`);
-        const searchKeys = await redis.keys(`search:${userId}:*`);
+const { markFinancialDataChanged } = require("../utils/cacheHelpers");
 
-        const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys, ...searchKeys];
-        if (allKeys.length > 0) {
-            await redis.del(...allKeys);
+async function wipeTransactionCaches(userId) {
+    await markFinancialDataChanged(userId);
+    if (redis) {
+        try {
+            await redis.del(`transactions:${userId}:list`);
+        } catch (err) {
+            logger.warn(`[ActionExecutor] Cache wipe error: ${err.message}`);
         }
-    } catch (err) {
-        logger.warn(`[ActionExecutor] Cache wipe error: ${err.message}`);
     }
 }
 
@@ -418,14 +418,11 @@ async function executeDeleteBudget(userId, budgetId) {
         if (redis) {
             try {
                 await redis.del(`budgets:${userId}`);
-                const keys = await redis.keys(`checkBudgets:${userId}:*`);
-                if (keys.length > 0) {
-                    await redis.del(...keys);
-                }
             } catch (err) {
                 logger.warn(`Redis error in delete budget: ${err.message}`);
             }
         }
+        await markFinancialDataChanged(userId);
         
         return { success: true, message: `Budget for "${budget.month}/${budget.year}" deleted successfully.` };
     } catch (err) {
@@ -492,27 +489,40 @@ async function executeCreateCategory(userId, fields) {
         }
 
         const normalizedName = normalizeCategoryName(categoryNewName);
-        const existing = await resolveCategory(userId, normalizedName);
-        if (existing) {
-            return { success: false, message: `Category "${normalizedName}" already exists.` };
-        }
-
-        const category = await Category.create({
-            name: normalizedName,
-            user: userId
+        
+        let existingCategory = await Category.findOne({
+            user: userId,
+            name: { $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") }
         });
+
+        let category;
+        if (existingCategory) {
+            if (existingCategory.isDeleted) {
+                existingCategory.isDeleted = false;
+                existingCategory.deletedAt = null;
+                existingCategory.name = normalizedName;
+                await existingCategory.save();
+                category = existingCategory;
+            } else {
+                return { success: false, message: `Category "${normalizedName}" already exists.` };
+            }
+        } else {
+            category = await Category.create({
+                name: normalizedName,
+                user: userId
+            });
+        }
 
         invalidateUserSearchCache(userId);
 
         if (redis) {
             try {
                 await redis.del(`categories:${userId}`);
-                const searchKeys = await redis.keys(`search:${userId}:*`);
-                if (searchKeys.length > 0) await redis.del(...searchKeys);
             } catch (err) {
                 logger.warn(`Redis error on category create: ${err.message}`);
             }
         }
+        await markFinancialDataChanged(userId);
 
         return {
             success: true,
@@ -560,12 +570,11 @@ async function executeDeleteCategory(userId, categoryId) {
         if (redis) {
             try {
                 await redis.del(`categories:${userId}`);
-                const searchKeys = await redis.keys(`search:${userId}:*`);
-                if (searchKeys.length > 0) await redis.del(...searchKeys);
             } catch (err) {
                 logger.warn(`Redis error in delete category: ${err.message}`);
             }
         }
+        await markFinancialDataChanged(userId);
         
         return { success: true, message: `Category "${category.name}" deleted successfully.` };
     } catch (err) {
@@ -597,12 +606,11 @@ async function executeUpdateCategory(userId, categoryId, newName) {
         if (redis) {
             try {
                 await redis.del(`categories:${userId}`);
-                const searchKeys = await redis.keys(`search:${userId}:*`);
-                if (searchKeys.length > 0) await redis.del(...searchKeys);
             } catch (err) {
                 logger.warn(`Redis error in rename category: ${err.message}`);
             }
         }
+        await markFinancialDataChanged(userId);
         
         return { 
             success: true, 
@@ -615,6 +623,86 @@ async function executeUpdateCategory(userId, categoryId, newName) {
     } catch (err) {
         logger.error(`[ActionExecutor] updateCategory error: ${err.message}`, err);
         return { success: false, message: "Failed to rename category." };
+    }
+}
+
+// ─── P2P Actions ─────────────────────────────────────────────────────────────
+
+async function resolveUserByName(nameQuery) {
+    if (!nameQuery) return null;
+    const users = await User.find({
+        $or: [
+            { name: { $regex: new RegExp(escapeRegex(nameQuery), "i") } },
+            { email: { $regex: new RegExp(escapeRegex(nameQuery), "i") } }
+        ]
+    }).limit(2).lean();
+    if (users.length === 1) return users[0];
+    return null;
+}
+
+async function executeSendMoney(userId, receiverQuery, amount) {
+    try {
+        const parsedAmount = parseFloat(amount);
+        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+            return { success: false, message: "Please specify a valid amount to send." };
+        }
+
+        const receiver = await resolveUserByName(receiverQuery);
+        if (!receiver) {
+            return { success: false, message: `Could not uniquely identify a user named "${receiverQuery}".` };
+        }
+        if (receiver._id.toString() === userId.toString()) {
+            return { success: false, message: "You cannot send money to yourself." };
+        }
+
+        await sagaService.runP2PTransferSaga(userId, receiver._id, parsedAmount, "AI Sent");
+        return { success: true, message: `✅ Successfully sent ₹${parsedAmount.toLocaleString("en-IN")} to ${receiver.name || receiver.email}.` };
+    } catch (err) {
+        logger.error(`[ActionExecutor] executeSendMoney error: ${err.message}`);
+        return { success: false, message: `Failed to send money: ${err.message}` };
+    }
+}
+
+async function executeRequestMoney(userId, payerQuery, amount) {
+    try {
+        const parsedAmount = parseFloat(amount);
+        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+            return { success: false, message: "Please specify a valid amount to request." };
+        }
+
+        const payer = await resolveUserByName(payerQuery);
+        if (!payer) {
+            return { success: false, message: `Could not uniquely identify a user named "${payerQuery}".` };
+        }
+        if (payer._id.toString() === userId.toString()) {
+            return { success: false, message: "You cannot request money from yourself." };
+        }
+
+        const request = await MoneyRequest.create({
+            requester: userId,
+            payer: payer._id,
+            amount: parsedAmount,
+            description: "AI Requested",
+            status: "PENDING"
+        });
+
+        // Send notification
+        const Notification = require("../models/notificationModel");
+        const { sendNotificationToUser } = require("../utils/socket");
+        const requester = await User.findById(userId).select("name email");
+        const reqName = requester.name || requester.email || "A user";
+
+        const notification = await Notification.create({
+            user: payer._id,
+            type: "MONEY_REQUEST",
+            message: `${reqName} has requested ₹${parsedAmount} from you.`
+        });
+        sendNotificationToUser(payer._id, notification);
+
+        return { success: true, message: `✅ Successfully requested ₹${parsedAmount.toLocaleString("en-IN")} from ${payer.name || payer.email}.` };
+    } catch (err) {
+        logger.error(`[ActionExecutor] executeRequestMoney error: ${err.message}`);
+        return { success: false, message: `Failed to request money: ${err.message}` };
     }
 }
 
@@ -631,11 +719,23 @@ async function executeAnalyticsQuery(userId, analyticsType) {
         switch (analyticsType) {
             case "total_spending":
             case "smart_insights": {
-                const insights = await analyticsService.getSmartInsights(uid);
+                const aiResult = await aiInsightsService.generateInsights(userId);
+                
+                let textSummary = `**${aiResult.summary}**\n\n`;
+                textSummary += aiResult.insights.map(i => {
+                    const iconMap = {
+                        "trending-up": "📈", "trending-down": "📉", "pie-chart": "🥧",
+                        "alert-triangle": "⚠️", "piggy-bank": "🐷", "calendar": "📅",
+                        "zap": "⚡", "target": "🎯", "activity": "📊"
+                    };
+                    const icon = iconMap[i.icon] || "💡";
+                    return `${icon} **${i.title}**: ${i.message}`;
+                }).join("\n\n");
+                
                 return {
                     success: true,
-                    data: insights,
-                    summary: `Total spending this month: ₹${insights.currentTotal.toLocaleString("en-IN")}, compared to ₹${insights.prevTotal.toLocaleString("en-IN")} last month.\nInsights: ${insights.insights.join(" ")}`
+                    data: aiResult,
+                    summary: textSummary
                 };
             }
             case "category_breakdown": {
@@ -787,5 +887,7 @@ module.exports = {
     executeDeleteBudget,
     executeUpdateBudget,
     executeDeleteCategory,
-    executeUpdateCategory
+    executeUpdateCategory,
+    executeSendMoney,
+    executeRequestMoney
 };

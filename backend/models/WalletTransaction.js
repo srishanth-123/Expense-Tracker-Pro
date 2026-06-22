@@ -17,8 +17,18 @@ const walletTransactionSchema = new mongoose.Schema({
     },
     source: {
         type: String,
-        enum: ["upi", "expense", "split", "topup", "subscription"],
+        enum: ["upi", "expense", "split", "topup", "subscription", "transfer"],
         required: true
+    },
+    sender: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: false
+    },
+    receiver: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: false
     },
     status: {
         type: String,

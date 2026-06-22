@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertCircle } from 'lucide-react';
 import Button from '../ui/Button';
@@ -46,17 +46,16 @@ const BudgetForm = ({ isOpen, onClose, onSubmit, categories, editing, defaultMon
         warningThreshold: editing.warningThreshold ?? 80,
       });
     } else {
-      setForm({
-        category: categories[0]?._id || '',
-        amount: '',
+      setForm((prev) => ({
+        category: prev.category || categories[0]?._id || '',
+        amount: prev.amount || '',
         month: defaultMonth || now.getMonth() + 1,
         year: defaultYear || now.getFullYear(),
-        warningThreshold: 80,
-      });
+        warningThreshold: prev.warningThreshold || 80,
+      }));
     }
     setError('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, isOpen]);
+  }, [editing, isOpen, categories, defaultMonth, defaultYear]);
 
   const handleSubmit = (e) => {
     e.preventDefault();

@@ -76,19 +76,6 @@ const markAsRead = async (req, res) => {
             return res.status(404).json({ success: false, message: "Notification not found" });
         }
 
-        // Clear cache for this user's notifications
-        if (redis) {
-            try {
-                const userId = req.user._id;
-                const keys = await redis.keys(`notifications:${userId}:*`);
-                if (keys.length > 0) {
-                    await redis.del(keys);
-                }
-            } catch (err) {
-                console.warn("Failed to clear notification cache:", err.message);
-            }
-        }
-
         res.json({ success: true, notification });
     } catch (error) {
         logger.error(`Error marking notification as read: ${error.message}`);
@@ -106,22 +93,93 @@ const markAllAsRead = async (req, res) => {
             { read: true }
         );
 
-        // Clear cache for this user's notifications
-        if (redis) {
-            try {
-                const userId = req.user._id;
-                const keys = await redis.keys(`notifications:${userId}:*`);
-                if (keys.length > 0) {
-                    await redis.del(keys);
-                }
-            } catch (err) {
-                console.warn("Failed to clear notification cache:", err.message);
-            }
-        }
-
         res.json({ success: true, message: "All notifications marked as read" });
     } catch (error) {
         logger.error(`Error marking all notifications as read: ${error.message}`);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+};
+// @desc    Delete a single notification
+// @route   DELETE /api/v1/notifications/:id
+// @access  Private
+const deleteNotification = async (req, res) => {
+    try {
+        const notification = await Notification.findOneAndDelete({
+            _id: req.params.id,
+            user: req.user._id
+        });
+
+        if (!notification) {
+            return res.status(404).json({ success: false, message: "Notification not found" });
+        }
+
+        // Redis cache is cleared via Mongoose middleware (though findOneAndDelete might not trigger 'save', so we explicitly clear cache if needed, or use findByIdAndDelete. Let's rely on manual clear here just in case)
+        if (redis) {
+            try {
+                const keys = await redis.keys(`notifications:${req.user._id}:*`);
+                if (keys.length > 0) await redis.del(...keys);
+            } catch (err) {
+                console.warn("Redis DEL error:", err.message);
+            }
+        }
+
+        res.json({ success: true, message: "Notification deleted" });
+    } catch (error) {
+        logger.error(`Error deleting notification: ${error.message}`);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+};
+
+// @desc    Delete multiple notifications
+// @route   DELETE /api/v1/notifications/bulk
+// @access  Private
+const deleteBulkNotifications = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Please provide an array of notification IDs" });
+        }
+
+        await Notification.deleteMany({
+            _id: { $in: ids },
+            user: req.user._id
+        });
+
+        if (redis) {
+            try {
+                const keys = await redis.keys(`notifications:${req.user._id}:*`);
+                if (keys.length > 0) await redis.del(...keys);
+            } catch (err) {
+                console.warn("Redis DEL error:", err.message);
+            }
+        }
+
+        res.json({ success: true, message: "Notifications deleted" });
+    } catch (error) {
+        logger.error(`Error deleting bulk notifications: ${error.message}`);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+};
+
+// @desc    Delete all notifications for user
+// @route   DELETE /api/v1/notifications/all
+// @access  Private
+const deleteAllNotifications = async (req, res) => {
+    try {
+        await Notification.deleteMany({ user: req.user._id });
+
+        if (redis) {
+            try {
+                const keys = await redis.keys(`notifications:${req.user._id}:*`);
+                if (keys.length > 0) await redis.del(...keys);
+            } catch (err) {
+                console.warn("Redis DEL error:", err.message);
+            }
+        }
+
+        res.json({ success: true, message: "All notifications deleted" });
+    } catch (error) {
+        logger.error(`Error deleting all notifications: ${error.message}`);
         res.status(500).json({ success: false, message: "Server Error" });
     }
 };
@@ -129,5 +187,8 @@ const markAllAsRead = async (req, res) => {
 module.exports = {
     getNotifications,
     markAsRead,
-    markAllAsRead
+    markAllAsRead,
+    deleteNotification,
+    deleteBulkNotifications,
+    deleteAllNotifications
 };

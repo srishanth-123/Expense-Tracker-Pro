@@ -13,6 +13,7 @@ const Navbar = ({ onMenuClick, onAIChatToggle }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [showConfirmUpgrade, setShowConfirmUpgrade] = useState(false);
+  const [showConfirmLogout, setShowConfirmLogout] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,7 +320,7 @@ const Navbar = ({ onMenuClick, onAIChatToggle }) => {
               <button
                 onClick={() => {
                   setIsProfileOpen(false);
-                  logout();
+                  setShowConfirmLogout(true);
                 }}
                 style={{
                   display: 'flex',
@@ -358,6 +359,19 @@ const Navbar = ({ onMenuClick, onAIChatToggle }) => {
       cancelText="Cancel"
       isDanger={false}
       loading={upgrading}
+    />
+    <ConfirmModal
+      isOpen={showConfirmLogout}
+      onClose={() => setShowConfirmLogout(false)}
+      onConfirm={() => {
+        setShowConfirmLogout(false);
+        logout();
+      }}
+      title="Logout"
+      message="Are you sure you want to log out of your account?"
+      confirmText="Logout"
+      cancelText="Cancel"
+      isDanger={true}
     />
     </>
   );

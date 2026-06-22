@@ -22,7 +22,12 @@ const notificationSchema = new mongoose.Schema(
                 "TRANSACTION_CREATED",
                 "TRANSACTION_UPDATED",
                 "TRANSACTION_DELETED",
-                "TRANSACTION_RESTORED"
+                "TRANSACTION_RESTORED",
+                "MONEY_REQUEST",
+                "MONEY_REQUEST_ACCEPTED",
+                "MONEY_REQUEST_REJECTED",
+                "P2P_TRANSFER_SENT",
+                "P2P_TRANSFER_RECEIVED"
             ],
             required: true,
         },

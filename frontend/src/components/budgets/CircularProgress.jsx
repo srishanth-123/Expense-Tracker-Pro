@@ -1,8 +1,7 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 
 // Status -> color mapping (shared with budget cards).
-export const STATUS_COLORS = {
+const STATUS_COLORS = {
   safe: 'var(--success)',
   warning: 'var(--warning)',
   exceeded: 'var(--danger)',

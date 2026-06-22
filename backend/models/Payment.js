@@ -22,6 +22,11 @@ const paymentSchema = new mongoose.Schema({
         type: String,
         enum: ["pending", "success", "failed"],
         default: "pending"
+    },
+    purpose: {
+        type: String,
+        enum: ["wallet_topup", "subscription"],
+        default: "wallet_topup"
     }
 }, { timestamps: true });
 

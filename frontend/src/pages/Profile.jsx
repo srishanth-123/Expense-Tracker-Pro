@@ -1,21 +1,117 @@
-import { useState, useContext, useRef } from 'react';
+import { useState, useContext, useRef, useEffect } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { Camera, User, Mail, Save, X, AlertCircle, CheckCircle } from 'lucide-react';
+import { Camera, User, Mail, Save, X, AlertCircle } from 'lucide-react';
 import api from '../api';
 import { toast } from 'react-hot-toast';
 import Card from '../components/ui/Card';
 
 const Profile = () => {
-  const { user, setUser, refreshUser } = useContext(AuthContext);
+  const { user, refreshUser } = useContext(AuthContext);
   const { theme } = useTheme();
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [previewPic, setPreviewPic] = useState(user?.profilePic || '');
   const [newPicBase64, setNewPicBase64] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
   const [picError, setPicError] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    document.body.appendChild(script);
+    return () => document.body.removeChild(script);
+  }, []);
+
+  const handleSubscribe = async () => {
+    try {
+      setProcessingPayment(true);
+      if (!window.Razorpay) {
+        toast.error("Razorpay SDK failed to load.");
+        setProcessingPayment(false);
+        return;
+      }
+
+      // Create subscription order (amount 499, purpose: subscription)
+      const orderRes = await api.post('/payment/create-order', { amount: 499, purpose: 'subscription' });
+      const { orderId, amount, currency, keyId } = orderRes.data?.data || orderRes.data;
+
+      let paymentProcessed = false;
+
+      const options = {
+        key: keyId, 
+        amount: amount, 
+        currency: currency,
+        name: "ExpenseTracker Pro",
+        description: "30-Day Pro Subscription",
+        order_id: orderId,
+        handler: async function (response) {
+          paymentProcessed = true;
+          try {
+            toast.loading("Verifying payment...");
+            await api.post('/payment/verify', {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature
+            });
+            toast.dismiss();
+            toast.success("Successfully upgraded to PRO!");
+            if (refreshUser) await refreshUser();
+          } catch {
+            toast.dismiss();
+            toast.error("Payment verification failed.");
+          } finally {
+            setProcessingPayment(false);
+          }
+        },
+        prefill: {
+          name: user?.name || "User",
+          email: user?.email || "",
+        },
+        theme: { color: "#8b5cf6" },
+        modal: {
+          ondismiss: async function() {
+            setProcessingPayment(false);
+            if (paymentProcessed) return;
+            paymentProcessed = true;
+            try {
+              await api.post('/payment/fail', {
+                razorpay_order_id: orderId,
+                reason: "Payment cancelled by user"
+              });
+            } catch (failLogErr) {
+              console.error("Failed to log subscription payment cancellation:", failLogErr);
+            }
+          }
+        }
+      };
+
+      const rzp1 = new window.Razorpay(options);
+      rzp1.on('payment.failed', async function (response){
+        if (paymentProcessed) return;
+        paymentProcessed = true;
+        const errMsg = response.error?.description || "Payment failed";
+        toast.error(`Payment Failed: ${errMsg}`);
+        setProcessingPayment(false);
+        try {
+          await api.post('/payment/fail', {
+            razorpay_order_id: response.error?.metadata?.order_id || orderId,
+            razorpay_payment_id: response.error?.metadata?.payment_id,
+            reason: errMsg
+          });
+        } catch (failLogErr) {
+          console.error("Failed to log subscription payment failure:", failLogErr);
+        }
+      });
+      rzp1.open();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to initialize payment");
+      setProcessingPayment(false);
+    }
+  };
 
   const hasChanges = name !== (user?.name || '') || email !== (user?.email || '') || newPicBase64 !== null;
 
@@ -71,7 +167,7 @@ const Profile = () => {
       if (email !== (user?.email || '')) payload.email = email;
       if (newPicBase64 !== null) payload.profilePic = newPicBase64;
 
-      const res = await api.put('/auth/profile', payload);
+      await api.put('/auth/profile', payload);
       toast.success('Profile updated successfully!');
       if (refreshUser) await refreshUser();
       setNewPicBase64(null);
@@ -287,20 +383,63 @@ const Profile = () => {
       </button>
 
       {/* Account Info */}
-      <Card style={{ padding: '20px', opacity: 0.7 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+      <Card style={{ padding: '20px', opacity: 0.9 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
             <span style={{ color: 'var(--text-secondary)' }}>Member Since</span>
             <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
               {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A'}
             </span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
             <span style={{ color: 'var(--text-secondary)' }}>Plan</span>
-            <span style={{ color: user?.isPro ? '#a78bfa' : 'var(--text-primary)', fontWeight: 600 }}>
-              {user?.isPro ? '✦ Pro Member' : 'Free Plan'}
+            <span style={{ color: (user?.plan === 'PRO' || user?.isPro) ? '#a78bfa' : 'var(--text-primary)', fontWeight: 600 }}>
+              {(user?.plan === 'PRO' || user?.isPro) ? '✦ Pro Member' : 'Free Plan'}
             </span>
           </div>
+          
+          {(user?.plan === 'PRO' || user?.isPro) && user?.subscriptionEndDate && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Status</span>
+                <span style={{ color: user?.subscriptionStatus === 'ACTIVE' ? '#10b981' : '#ef4444', fontWeight: 600 }}>
+                  {user.subscriptionStatus}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Valid Until</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                  {new Date(user.subscriptionEndDate).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+            </>
+          )}
+
+          {user?.plan !== 'PRO' && !user?.isPro && (
+            <div style={{ marginTop: '12px' }}>
+              <button
+                onClick={handleSubscribe}
+                disabled={processingPayment}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                  color: 'white',
+                  fontWeight: 600,
+                  cursor: processingPayment ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  opacity: processingPayment ? 0.7 : 1
+                }}
+              >
+                {processingPayment ? 'Processing...' : 'Upgrade to PRO (₹499/mo)'}
+              </button>
+            </div>
+          )}
         </div>
       </Card>
     </div>

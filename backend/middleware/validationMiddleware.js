@@ -20,7 +20,13 @@ const validateRegistration = [
         .isLength({ max: 50 }).withMessage('Name must be at most 50 characters'),
     body('email')
         .isEmail().withMessage('Please provide a valid email')
-        .normalizeEmail(),
+        .normalizeEmail()
+        .custom((value) => {
+            if (!value.toLowerCase().endsWith('@gmail.com')) {
+                throw new Error('Only Gmail addresses (@gmail.com) are allowed');
+            }
+            return true;
+        }),
     body('password')
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
         .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
@@ -31,7 +37,13 @@ const validateRegistration = [
 const validateLogin = [
     body('email')
         .isEmail().withMessage('Please provide a valid email')
-        .normalizeEmail(),
+        .normalizeEmail()
+        .custom((value) => {
+            if (!value.toLowerCase().endsWith('@gmail.com')) {
+                throw new Error('Only Gmail addresses (@gmail.com) are allowed');
+            }
+            return true;
+        }),
     body('password')
         .notEmpty().withMessage('Password is required'),
     handleValidationErrors

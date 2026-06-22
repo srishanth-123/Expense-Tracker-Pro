@@ -46,6 +46,7 @@ const sendWelcomeEmail = (user) => {
 };
 
 const sendPasswordResetEmail = (user, resetUrl, expiresInMinutes) => {
+  logger.info(`[MAILER] Password Reset Link for ${user.email}: ${resetUrl}`);
   sendEmailAsync({
     to: user.email,
     subject: 'Reset your ExpenseTracker password',

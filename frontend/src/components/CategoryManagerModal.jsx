@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Edit2, Trash2, Check, RotateCcw } from 'lucide-react';
+import { X, Plus, Edit2, Trash2, Check } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import api from '../api';
 import Button from './ui/Button';
+import ConfirmModal from './ui/ConfirmModal';
 
 const CategoryManagerModal = ({ isOpen, onClose, onCategoriesUpdated }) => {
   const [categories, setCategories] = useState([]);
@@ -14,13 +15,14 @@ const CategoryManagerModal = ({ isOpen, onClose, onCategoriesUpdated }) => {
   const [editName, setEditName] = useState('');
   const [savingId, setSavingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, id: null, name: '' });
 
   const fetchCategories = async () => {
     try {
       setLoading(true);
       const res = await api.get('/categories');
       setCategories(Array.isArray(res) ? res : res.categories || []);
-    } catch (err) {
+    } catch {
       toast.error('Failed to load categories');
     } finally {
       setLoading(false);
@@ -90,7 +92,7 @@ const CategoryManagerModal = ({ isOpen, onClose, onCategoriesUpdated }) => {
       toast.success('Category deleted successfully');
       await fetchCategories();
       if (onCategoriesUpdated) onCategoriesUpdated();
-    } catch (err) {
+    } catch {
       toast.error('Failed to delete category');
     } finally {
       setDeletingId(null);
@@ -208,7 +210,7 @@ const CategoryManagerModal = ({ isOpen, onClose, onCategoriesUpdated }) => {
                           <Edit2 size={16} />
                         </button>
                         <button 
-                          onClick={() => handleDelete(cat._id)} 
+                          onClick={() => setDeleteConfirm({ isOpen: true, id: cat._id, name: cat.name })} 
                           disabled={deletingId === cat._id}
                           style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}
                           title="Delete"
@@ -224,6 +226,20 @@ const CategoryManagerModal = ({ isOpen, onClose, onCategoriesUpdated }) => {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        onClose={() => setDeleteConfirm({ isOpen: false, id: null, name: '' })}
+        onConfirm={async () => {
+          const id = deleteConfirm.id;
+          setDeleteConfirm({ isOpen: false, id: null, name: '' });
+          await handleDelete(id);
+        }}
+        title="Delete Category?"
+        message={`Are you sure you want to delete the category "${deleteConfirm.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        isDanger={true}
+      />
     </div>,
     document.body
   );

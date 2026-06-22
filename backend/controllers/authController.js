@@ -44,8 +44,55 @@ exports.registerUser = async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         const hashed = await bcrypt.hash(password, salt);
-
         const user = await User.create({ name, email, password: hashed });
+
+        // Auto-link unregistered splits matching this user's email
+        try {
+            const Split = require("../models/split");
+            const userEmail = email.toLowerCase().trim();
+            const matchingSplits = await Split.find({
+                "participants.email": userEmail,
+                "participants.status": "unregistered"
+            });
+
+            for (const split of matchingSplits) {
+                let updated = false;
+                for (const p of split.participants) {
+                    if (p.email?.toLowerCase() === userEmail && p.status === "unregistered") {
+                        p.user = user._id;
+                        p.status = p.paid ? "paid" : "pending";
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    split.status = split.participants.every(p => p.paid) ? "settled" : "pending";
+                    await split.save();
+
+                    if (redis) {
+                        try {
+                            const analyticsKeys = await redis.keys(`analytics:*:${split.paidBy}*`);
+                            const transactionKeys = await redis.keys(`transactions:${split.paidBy}:*`);
+                            const budgetKeys = await redis.keys(`checkBudgets:${split.paidBy}:*`);
+                            const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys];
+                            if (allKeys.length > 0) await redis.del(...allKeys);
+                        } catch (_) {}
+                    }
+                }
+            }
+
+            if (redis) {
+                try {
+                    const analyticsKeys = await redis.keys(`analytics:*:${user._id}*`);
+                    const transactionKeys = await redis.keys(`transactions:${user._id}:*`);
+                    const budgetKeys = await redis.keys(`checkBudgets:${user._id}:*`);
+                    const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys];
+                    if (allKeys.length > 0) await redis.del(...allKeys);
+                } catch (_) {}
+            }
+        } catch (linkErr) {
+            logger.error("Error auto-linking splits during registration:", linkErr);
+        }
+
         const token = generateToken(user.id);
 
         sendWelcomeEmail(user);
@@ -60,6 +107,9 @@ exports.registerUser = async (req, res) => {
                 name: user.name, 
                 email: user.email, 
                 isPro: user.isPro, 
+                plan: user.plan,
+                subscriptionStatus: user.subscriptionStatus,
+                subscriptionEndDate: user.subscriptionEndDate,
                 walletBalance: user.walletBalance, 
                 profilePic: user.profilePic || "",
                 token 
@@ -125,6 +175,13 @@ exports.loginUser = async (req, res) => {
         // Successful login — clear fail counter
         if (redis) await redis.del(failKey);
 
+        // Auto-expiry check
+        if (user.plan === "PRO" && user.subscriptionEndDate && new Date() > user.subscriptionEndDate) {
+            user.plan = "FREE";
+            user.subscriptionStatus = "EXPIRED";
+            await user.save();
+        }
+
         const token = generateToken(user.id);
         sendTokenCookie(res, token);
 
@@ -135,7 +192,10 @@ exports.loginUser = async (req, res) => {
                 _id: user.id, 
                 name: user.name, 
                 email: user.email, 
-                isPro: user.isPro, 
+                isPro: user.isPro,
+                plan: user.plan,
+                subscriptionStatus: user.subscriptionStatus,
+                subscriptionEndDate: user.subscriptionEndDate,
                 walletBalance: user.walletBalance, 
                 profilePic: user.profilePic || "",
                 token 
@@ -170,6 +230,10 @@ exports.forgotPassword = async (req, res) => {
         const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
         sendPasswordResetEmail(user, resetUrl, PASSWORD_RESET_EXPIRY_MINUTES);
+
+        if (process.env.NODE_ENV !== "production") {
+            genericResponse.resetUrl = resetUrl;
+        }
 
         res.json(genericResponse);
     } catch (error) {
@@ -239,14 +303,13 @@ exports.searchUsers = async (req, res) => {
 
         const cleanQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        // Search by exact email or partial name (case insensitive), limit to 10
-        // Order by prefix matching first to utilize the database index.
+        // Prefix-anchored (^) so the query can use the name/email index instead
+        // of scanning the whole collection. limited to 10 results.
+        const prefix = new RegExp(`^${cleanQuery}`, "i");
         const users = await User.find({
             $or: [
-                { name: { $regex: `^${cleanQuery}`, $options: "i" } },
-                { email: { $regex: `^${cleanQuery}`, $options: "i" } },
-                { name: { $regex: cleanQuery, $options: "i" } },
-                { email: { $regex: cleanQuery, $options: "i" } }
+                { name: { $regex: prefix } },
+                { email: { $regex: prefix } }
             ],
             _id: { $ne: req.user._id } // Don't return the searcher themselves
         }).select("_id name email").limit(10);
@@ -279,6 +342,9 @@ exports.updateProfile = async (req, res) => {
             const trimmedEmail = email.trim().toLowerCase();
             if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
                 return res.status(400).json({ success: false, message: "Please enter a valid email address." });
+            }
+            if (!trimmedEmail.endsWith('@gmail.com')) {
+                return res.status(400).json({ success: false, message: "Only Gmail addresses (@gmail.com) are allowed." });
             }
             // Check for duplicate
             const existing = await User.findOne({ email: trimmedEmail, _id: { $ne: userId } });

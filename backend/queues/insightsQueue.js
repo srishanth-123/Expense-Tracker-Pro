@@ -41,21 +41,27 @@ if (ioRedisConnection) {
     insightsWorker = new Worker(
         "ai-insights",
         async (job) => {
-            const { userId } = job.data;
-            logger.info(`[BullMQ] Processing AI insights for user ${userId}`);
+            const { userId, financialVersion } = job.data;
+            logger.info(`[BullMQ] Processing AI insights for user ${userId} (version: ${financialVersion || 1})`);
 
             // Lazy-load services to avoid circular dependency issues at startup
             const aiInsightsService = require("../services/aiInsightsService");
             const redis = require("../config/redis");
             const { sendNotificationToUser } = require("../utils/socket");
+            const { AI_INSIGHTS_TTL } = require("../utils/cacheHelpers");
 
             const result = await aiInsightsService.generateInsights(userId);
+            
+            // Stamp the result with version tracking metadata
+            result.financialDataVersion = financialVersion || 1;
+            result.insightVersion = financialVersion || 1;
+            result.lastInsightGeneratedAt = new Date().toISOString();
 
             // Cache in Upstash Redis (same key the controller uses)
-            const cacheKey = `analytics:aiInsights:${userId}`;
+            const cacheKey = `ai-insights:${userId}`;
             if (redis) {
                 try {
-                    await redis.set(cacheKey, result, { ex: 60 * 60 * 6 }); // 6h TTL
+                    await redis.set(cacheKey, JSON.stringify(result), { ex: AI_INSIGHTS_TTL });
                 } catch (err) {
                     logger.warn("[BullMQ] Failed to cache insights:", err.message);
                 }

@@ -1,19 +1,49 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, Check, Eye, EyeOff, Sparkles, Inbox } from 'lucide-react';
+import { Bell, Check, Eye, EyeOff, Sparkles, Inbox, Trash2 } from 'lucide-react';
 import Card from '../components/ui/Card';
+import ConfirmModal from '../components/ui/ConfirmModal';
 
 const Notifications = () => {
-    const { notifications = [], notificationsReady = false, fetchNotifications = () => {}, markAsRead = () => {}, markAllAsRead = () => {} } = useSocket() || {};
+    const { 
+        notifications = [], notificationsReady = false, fetchNotifications = () => {}, 
+        markAsRead = () => {}, markAllAsRead = () => {},
+        deleteNotification = () => {}, deleteBulkNotifications = () => {}, deleteAllNotifications = () => {}
+    } = useSocket() || {};
     
     const [showAll, setShowAll] = useState(false);
+    const [selected, setSelected] = useState(new Set());
+    const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+    const [isClearing, setIsClearing] = useState(false);
+    
+    const handleClearAllConfirm = async () => {
+        setIsClearing(true);
+        try {
+            await deleteAllNotifications();
+            setSelected(new Set());
+            await fetchNotifications();
+        } catch (error) {
+            console.error("Failed to clear notifications:", error);
+        } finally {
+            setIsClearing(false);
+            setIsClearModalOpen(false);
+        }
+    };
     
     // Trigger a fresh fetch on mount
     useEffect(() => {
         fetchNotifications();
     }, []);
+
+    const toggleSelect = (id, e) => {
+        e.stopPropagation();
+        const next = new Set(selected);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelected(next);
+    };
 
     const getIcon = (type) => {
         switch (type) {
@@ -39,7 +69,7 @@ const Notifications = () => {
             const d = new Date(dateStr);
             if (isNaN(d.getTime())) return 'some time ago';
             return formatDistanceToNow(d, { addSuffix: true });
-        } catch (_) {
+        } catch {
             return 'some time ago';
         }
     };
@@ -121,6 +151,25 @@ const Notifications = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    {selected.size > 0 && (
+                        <button
+                            onClick={() => {
+                                deleteBulkNotifications(Array.from(selected));
+                                setSelected(new Set());
+                            }}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px',
+                                borderRadius: '10px', border: '1px solid rgba(239, 68, 68, 0.3)',
+                                background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444',
+                                fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                        >
+                            <Trash2 size={16} />
+                            Delete ({selected.size})
+                        </button>
+                    )}
+
                     <button
                         onClick={() => setShowAll(!showAll)}
                         style={{
@@ -151,6 +200,24 @@ const Notifications = () => {
                         >
                             <Check size={16} />
                             Mark all as read
+                        </button>
+                    )}
+                    
+                    {notifications.length > 0 && (
+                        <button
+                            onClick={() => setIsClearModalOpen(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px',
+                                borderRadius: '10px', border: 'none',
+                                background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-secondary)',
+                                fontSize: '0.85rem', fontWeight: 500, cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.color = '#ef4444'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                        >
+                            <Trash2 size={16} />
+                            Clear All
                         </button>
                     )}
                 </div>
@@ -201,6 +268,24 @@ const Notifications = () => {
                                         }}
                                         className="notification-item-hover"
                                     >
+                                        <div 
+                                            onClick={(e) => toggleSelect(notification._id, e)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                padding: '0 8px', cursor: 'pointer', zIndex: 10
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: '20px', height: '20px', borderRadius: '4px',
+                                                border: `2px solid ${selected.has(notification._id) ? 'var(--primary)' : 'var(--surface-border)'}`,
+                                                background: selected.has(notification._id) ? 'var(--primary)' : 'transparent',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                transition: 'all 0.2s'
+                                            }}>
+                                                {selected.has(notification._id) && <Check size={12} color="white" strokeWidth={3} />}
+                                            </div>
+                                        </div>
+
                                         {/* Icon */}
                                         <div style={{
                                             fontSize: '1.75rem', width: '48px', height: '48px', borderRadius: '12px',
@@ -246,21 +331,36 @@ const Notifications = () => {
                                                     {formatTime(notification.createdAt)}
                                                 </span>
 
-                                                {!notification.read && (
+                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                    {!notification.read && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); markAsRead(notification._id); }}
+                                                            style={{
+                                                                background: 'transparent', border: 'none',
+                                                                color: 'var(--primary)', fontSize: '0.8rem',
+                                                                fontWeight: 600, cursor: 'pointer', padding: '4px 8px',
+                                                                borderRadius: '6px', transition: 'background 0.2s'
+                                                            }}
+                                                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)'}
+                                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                        >
+                                                            Dismiss
+                                                        </button>
+                                                    )}
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); markAsRead(notification._id); }}
+                                                        onClick={(e) => { e.stopPropagation(); deleteNotification(notification._id); }}
                                                         style={{
                                                             background: 'transparent', border: 'none',
-                                                            color: 'var(--primary)', fontSize: '0.8rem',
+                                                            color: 'var(--text-secondary)', fontSize: '0.8rem',
                                                             fontWeight: 600, cursor: 'pointer', padding: '4px 8px',
-                                                            borderRadius: '6px', transition: 'background 0.2s'
+                                                            borderRadius: '6px', transition: 'all 0.2s'
                                                         }}
-                                                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)'}
-                                                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.color = '#ef4444'; }}
+                                                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
                                                     >
-                                                        Dismiss
+                                                        Delete
                                                     </button>
-                                                )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -270,6 +370,17 @@ const Notifications = () => {
                     </ul>
                 )}
             </Card>
+
+            <ConfirmModal
+                isOpen={isClearModalOpen}
+                onClose={() => { if (!isClearing) setIsClearModalOpen(false); }}
+                onConfirm={handleClearAllConfirm}
+                title="Clear All Notifications"
+                message="Are you sure you want to delete all notifications? This action cannot be undone."
+                confirmText="Delete All"
+                cancelText="Cancel"
+                loading={isClearing}
+            />
         </div>
     );
 };

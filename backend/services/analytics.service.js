@@ -28,7 +28,7 @@ exports.getTopExpenses = async (userId, limit = 5, startDate = null, endDate = n
         if (endDate) query.date.$lte = endDate;
     }
 
-    const expenses = await Transaction.find(query).populate("category").lean();
+    const expenses = await Transaction.find(query).read("secondaryPreferred").populate("category").lean();
 
     // MaxHeap where largest amount is at the root.
     // comparator(a, b) > 0 means a should be closer to root than b.
@@ -90,7 +90,7 @@ exports.getCategoryTrend = async (userId) => {
         {
             $sort: { "_id.year": 1, "_id.month": 1 }
         }
-    ]);
+    ]).read("secondaryPreferred");
 
     // Format into chart-ready data
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -144,7 +144,7 @@ exports.getSmartInsights = async (userId) => {
         user: objUserId,
         type: "expense",
         isDeleted: false
-    });
+    }).read("secondaryPreferred");
 
     if (!hasAnyTransactions) {
         return { insights: ["Start tracking your expenses to get personalized insights!"], currentTotal: 0, prevTotal: 0 };
@@ -160,7 +160,7 @@ exports.getSmartInsights = async (userId) => {
             } 
         },
         { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
+    ]).read("secondaryPreferred");
 
     const prevData = await Transaction.aggregate([
         { 
@@ -172,7 +172,7 @@ exports.getSmartInsights = async (userId) => {
             } 
         },
         { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
+    ]).read("secondaryPreferred");
 
     const currentTotal = currentData.length > 0 ? currentData[0].total : 0;
     const prevTotal = prevData.length > 0 ? prevData[0].total : 0;
@@ -223,7 +223,7 @@ exports.getSmartInsights = async (userId) => {
             }
         },
         { $unwind: { path: "$categoryDoc", preserveNullAndEmptyArrays: true } }
-    ]);
+    ]).read("secondaryPreferred");
 
     let topCategoryInsight = null;
     if (categoryData.length > 0 && categoryData[0].total > 0) {
@@ -264,7 +264,7 @@ exports.getDailyHeatmap = async (userId) => {
             }
         },
         { $sort: { "_id": 1 } }
-    ]);
+    ]).read("secondaryPreferred");
 
     // Create a map of date -> total from the aggregation result
     const dataMap = new Map();
@@ -311,7 +311,7 @@ exports.getSpendingPrediction = async (userId) => {
                 total: { $sum: "$amount" } 
             } 
         }
-    ]);
+    ]).read("secondaryPreferred");
 
     let predictedExpense = 0;
     if (data.length > 0) {
@@ -335,7 +335,7 @@ exports.getSpendingPrediction = async (userId) => {
                     total: { $sum: "$amount" } 
                 } 
             }
-        ]);
+        ]).read("secondaryPreferred");
         if (currentMonthData.length > 0) {
             predictedExpense = currentMonthData[0].total;
         }
@@ -344,4 +344,61 @@ exports.getSpendingPrediction = async (userId) => {
     return {
         predictedExpense: parseFloat(predictedExpense.toFixed(2))
     };
+};
+
+exports.getIncomeExpenseTrend = async (userId) => {
+    const objUserId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    const data = await Transaction.aggregate([
+        {
+            $match: {
+                user: objUserId,
+                isDeleted: false,
+                date: { $gte: sixMonthsAgo }
+            }
+        },
+        {
+            $group: {
+                _id: {
+                    year: { $year: "$date" },
+                    month: { $month: "$date" },
+                    type: "$type"
+                },
+                total: { $sum: "$amount" }
+            }
+        },
+        {
+            $sort: { "_id.year": 1, "_id.month": 1 }
+        }
+    ]).read("secondaryPreferred");
+
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const result = [];
+
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+        result.push({
+            name: label,
+            income: 0,
+            expense: 0,
+            year: d.getFullYear(),
+            month: d.getMonth() + 1
+        });
+    }
+
+    data.forEach(item => {
+        const matchingPoint = result.find(r => r.year === item._id.year && r.month === item._id.month);
+        if (matchingPoint) {
+            if (item._id.type === "income") {
+                matchingPoint.income = item.total;
+            } else if (item._id.type === "expense") {
+                matchingPoint.expense = item.total;
+            }
+        }
+    });
+
+    return result;
 };

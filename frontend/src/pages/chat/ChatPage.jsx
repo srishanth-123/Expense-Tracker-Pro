@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import { useState, useEffect, useRef, useContext } from 'react';
 import { 
   MessageSquare, Plus, Edit3, Trash2, Send, CheckCircle, 
-  AlertTriangle, TrendingUp, PieChart, Folder, Check, X, ArrowUpRight, Bot, Zap
+  AlertTriangle, TrendingUp, PieChart, Folder, Check, X, ArrowUpRight, Bot, Sparkles
 } from 'lucide-react';
 import { useChat } from '../../hooks/chat/useChat';
 import { AuthContext } from '../../context/AuthContext';
+import ConfirmModal from '../../components/ui/ConfirmModal';
 import './ChatPage.css';
 
 // ─── Helpers for Card Parsing & Formatting ───────────────────────────────────
@@ -13,7 +14,7 @@ const parseContent = (content) => {
     if (typeof content === 'string' && (content.startsWith('{') || content.startsWith('['))) {
       return JSON.parse(content);
     }
-  } catch (e) {
+  } catch {
     // raw string
   }
   return null;
@@ -133,7 +134,7 @@ const StructuredMessageContent = ({ msg, onSendAction, isLast, loading }) => {
   }
 
   if (responseType === 'confirmation') {
-    const { message, intent, fields } = parsed;
+    const { intent, fields } = parsed;
     return (
       <div className="structured-card confirmation-card" id="chat-confirm-card">
         <div className="confirm-header">
@@ -233,6 +234,7 @@ const ChatPage = () => {
   const [inputText, setInputText] = useState('');
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, sessionId: null });
   const messagesEndRef = useRef(null);
 
   const {
@@ -347,11 +349,7 @@ const ChatPage = () => {
                       <button 
                         className="sess-action-btn delete" 
                         title="Delete Chat"
-                        onClick={() => {
-                          if (window.confirm("Are you sure you want to delete this conversation? This will clear all its history.")) {
-                            handleDeleteSession(sess._id);
-                          }
-                        }}
+                        onClick={() => setDeleteConfirm({ isOpen: true, sessionId: sess._id })}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -432,7 +430,7 @@ const ChatPage = () => {
                         loading={loading}
                       />
                       <span className="bubble-timestamp">
-                        {new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   </div>
@@ -481,6 +479,20 @@ const ChatPage = () => {
           </form>
         </div>
       </div>
+
+      {/* Delete Conversation Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        onClose={() => setDeleteConfirm({ isOpen: false, sessionId: null })}
+        onConfirm={() => {
+          handleDeleteSession(deleteConfirm.sessionId);
+          setDeleteConfirm({ isOpen: false, sessionId: null });
+        }}
+        title="Delete conversation?"
+        message="This will permanently clear all of this conversation's history. This action cannot be undone."
+        confirmText="Delete"
+        isDanger={true}
+      />
     </div>
   );
 };

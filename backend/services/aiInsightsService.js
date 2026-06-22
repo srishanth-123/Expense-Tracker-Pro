@@ -41,7 +41,7 @@ async function getWeekendVsWeekday(userId) {
                 count: { $sum: 1 },
             },
         },
-    ]);
+    ]).read("secondaryPreferred");
 
     let weekend = 0, weekday = 0;
     data.forEach((d) => (d._id ? (weekend = d.total) : (weekday = d.total)));
@@ -61,7 +61,7 @@ async function getUnusualDays(userId) {
                 total: { $sum: "$amount" },
             },
         },
-    ]);
+    ]).read("secondaryPreferred");
     if (daily.length < 5) return [];
 
     const totals = daily.map((d) => d.total);
@@ -312,4 +312,51 @@ async function generateInsights(userId) {
     };
 }
 
-module.exports = { generateInsights, buildSnapshot };
+async function calculateFinancialHealthScore(userId) {
+    const snap = await buildSnapshot(userId);
+    let score = 100;
+    const deductions = [];
+
+    // 1. Month-over-month change
+    if (snap.previousMonthSpend > 0) {
+        if (snap.monthOverMonthChangePct > 20) {
+            score -= 25;
+            deductions.push("Spending spiked sharply vs last month");
+        } else if (snap.monthOverMonthChangePct > 10) {
+            score -= 15;
+            deductions.push("Spending increased over 10% vs last month");
+        }
+    }
+
+    // 2. Budget Risk
+    if (snap.predictedThisMonth > 0 && snap.currentMonthSpend > 0) {
+        if (snap.predictedThisMonth > snap.currentMonthSpend * 1.2) {
+            score -= 20;
+            deductions.push("High risk of overshooting monthly average");
+        }
+    }
+
+    // 3. Top Category Dominance
+    if (snap.topCategory && snap.currentMonthSpend > 0) {
+        const share = (snap.topCategory.amount / snap.currentMonthSpend) * 100;
+        if (share > 50) {
+            score -= 15;
+            deductions.push(`${snap.topCategory.category} takes up more than 50% of expenses`);
+        }
+    }
+
+    // 4. Unusual Days
+    if (snap.unusualDays.length > 2) {
+        score -= 15;
+        deductions.push("Multiple unusually high spending days detected");
+    }
+
+    score = Math.max(0, Math.min(100, score));
+    return {
+        score,
+        status: score >= 80 ? "Excellent" : score >= 60 ? "Good" : score >= 40 ? "Fair" : "Needs Attention",
+        deductions
+    };
+}
+
+module.exports = { generateInsights, buildSnapshot, calculateFinancialHealthScore };

@@ -1,11 +1,16 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Pencil, Trash2, AlertTriangle, CheckCircle2, TrendingUp } from 'lucide-react';
 import Card from '../ui/Card';
-import CircularProgress, { STATUS_COLORS } from './CircularProgress';
+import CircularProgress from './CircularProgress';
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n ?? 0);
+
+const STATUS_COLORS = {
+  safe: 'var(--success)',
+  warning: 'var(--warning)',
+  exceeded: 'var(--danger)',
+};
 
 const STATUS_META = {
   safe: { label: 'On Track', icon: CheckCircle2 },

@@ -16,6 +16,13 @@ const ForgotPassword = () => {
       const response = await api.post('/auth/forgot-password', { email });
       toast.success(response.message || 'If an account exists, a reset link has been sent.');
       setEmail('');
+      
+      if (response.resetUrl) {
+        toast('Local development: Redirecting to password reset page...', { icon: '🔄' });
+        setTimeout(() => {
+          window.location.href = response.resetUrl;
+        }, 1500);
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || 'Unable to send reset link');
     } finally {

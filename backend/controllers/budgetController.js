@@ -1,8 +1,10 @@
+const mongoose = require("mongoose");
 const Budget=require("../models/budget");
 const Category = require("../models/category");
 const Transaction=require("../models/Transaction");
 const redis = require("../config/redis");
 const budgetService = require("../services/budgetService");
+const logger = require("../utils/logger");
 
 // Accept either `limit` or `amount` (alias) from the client.
 const readAmount = (body) => {
@@ -18,6 +20,12 @@ exports.setBudget=async(req,res)=>{
         // ── Validation ──
         if (!category || !month || !year || limit === undefined || limit === null) {
             return res.status(400).json({success: false, message: "category, amount, month and year are required"});
+        }
+        if (!mongoose.Types.ObjectId.isValid(category)) {
+            return res.status(400).json({success: false, message: "Invalid category ID format"});
+        }
+        if (isNaN(year) || Number(year) <= 0) {
+            return res.status(400).json({success: false, message: "Invalid year"});
         }
         if (isNaN(limit) || Number(limit) <= 0) {
             return res.status(400).json({success: false, message: "Budget amount must be a positive number"});
@@ -36,25 +44,44 @@ exports.setBudget=async(req,res)=>{
         }
 
         // Prevent duplicate budgets for the same category/month/year.
-        const existing = await Budget.findOne({
+        const existingActive = await Budget.findOne({
             user: req.user._id,
             category,
             month,
             year,
             isDeleted: false
         });
-        if (existing) {
+        if (existingActive) {
             return res.status(409).json({success: false, message: "A budget for this category and month already exists"});
         }
 
-        const budget = await Budget.create({
+        // Check if there is a soft-deleted budget for the same category/month/year that we can reuse
+        const existingDeleted = await Budget.findOne({
             user: req.user._id,
             category,
-            limit: Number(limit),
-            month: Number(month),
-            year: Number(year),
-            warningThreshold: warningThreshold !== undefined ? Number(warningThreshold) : 80
+            month,
+            year,
+            isDeleted: true
         });
+
+        let budget;
+        if (existingDeleted) {
+            existingDeleted.isDeleted = false;
+            existingDeleted.deletedAt = null;
+            existingDeleted.limit = Number(limit);
+            existingDeleted.warningThreshold = warningThreshold !== undefined ? Number(warningThreshold) : 80;
+            existingDeleted.lastNotifiedLevel = 0; // Reset alert level
+            budget = await existingDeleted.save();
+        } else {
+            budget = await Budget.create({
+                user: req.user._id,
+                category,
+                limit: Number(limit),
+                month: Number(month),
+                year: Number(year),
+                warningThreshold: warningThreshold !== undefined ? Number(warningThreshold) : 80
+            });
+        }
 
         // Compute initial spend + status (covers pre-existing transactions).
         await budgetService.evaluateBudget(budget);
@@ -63,13 +90,16 @@ exports.setBudget=async(req,res)=>{
         const populated = await Budget.findById(budget._id).populate("category");
         res.status(201).json({success: true, message: "Budget created successfully", data: populated});
     } catch (error) {
-        console.error("Set budget error:", error);
+        logger.error("Set budget error:", error);
         res.status(500).json({success: false, message: "Server error"});
     }
 };
 
 exports.getBudgetById = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({success: false, message: "Invalid budget ID format"});
+        }
         const budget = await Budget.findOne({
             _id: req.params.id,
             user: req.user._id,
@@ -97,6 +127,9 @@ exports.getBudgetById = async (req, res) => {
 
 exports.updateBudget = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({success: false, message: "Invalid budget ID format"});
+        }
         const { month, year, warningThreshold } = req.body;
         const limit = readAmount(req.body);
 
@@ -123,7 +156,12 @@ exports.updateBudget = async (req, res) => {
             }
             budget.month = Number(month);
         }
-        if (year !== undefined) budget.year = Number(year);
+        if (year !== undefined) {
+            if (isNaN(year) || Number(year) <= 0) {
+                return res.status(400).json({success: false, message: "Invalid year"});
+            }
+            budget.year = Number(year);
+        }
 
         // Reset notification level so thresholds re-evaluate against the new limit.
         budget.lastNotifiedLevel = 0;
@@ -264,7 +302,13 @@ exports.getBudgets = async (req, res) => {
 };
 
 exports.checkBudget=async(req,res)=>{
-    const{month,year}=req.query;
+    const month = Number(req.query.month);
+    const year = Number(req.query.year);
+
+    if (isNaN(month) || month < 1 || month > 12 || isNaN(year) || year <= 0) {
+        return res.status(400).json({success: false, message: "Valid month and year query parameters are required"});
+    }
+
     const cacheKey = `checkBudgets:${req.user._id}:${month}-${year}`;
 
     try {
@@ -306,8 +350,8 @@ exports.checkBudget=async(req,res)=>{
                     user: req.user._id,
                     type: "expense",
                     date: {
-                        $gte: new Date(year, month - 1, 1),
-                        $lte: new Date(year, month, 0)
+                        $gte: new Date(Date.UTC(year, month - 1, 1)),
+                        $lte: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
                     },
                     isDeleted: false
                 }
@@ -354,6 +398,9 @@ exports.checkBudget=async(req,res)=>{
 
 exports.deleteBudget = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({success: false, message: "Invalid budget ID format"});
+        }
         const budget = await Budget.findOneAndUpdate(
             { _id: req.params.id, user: req.user._id },
             { isDeleted: true, deletedAt: new Date() }
@@ -383,6 +430,9 @@ exports.deleteBudget = async (req, res) => {
 
 exports.restoreBudget = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({success: false, message: "Invalid budget ID format"});
+        }
         const budget = await Budget.findOne({ _id: req.params.id, user: req.user._id });
         
         if (!budget) {

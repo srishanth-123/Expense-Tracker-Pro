@@ -1,10 +1,8 @@
-import React, { useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Receipt, Wallet, PieChart, Users, Target, X, Bot } from 'lucide-react';
-import { AuthContext } from '../context/AuthContext';
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
-  const { user } = useContext(AuthContext);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   useEffect(() => {

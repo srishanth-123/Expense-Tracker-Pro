@@ -1,12 +1,11 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { 
   Search, Plus, ArrowUpRight, ArrowDownRight, 
-  Trash2, Edit2, RotateCcw, X, Inbox, Calendar, FolderEdit
+  Trash2, Edit2, RotateCcw, X, Inbox, Calendar, FolderEdit, Download
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { AuthContext } from '../context/AuthContext';
 import api from '../api';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -67,13 +66,16 @@ const getDateRange = (filterType, customStartDate = '', customEndDate = '') => {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const Transactions = () => {
-  const { user, refreshUser } = useContext(AuthContext);
   const [searchParams, setSearchParams] = useSearchParams();
   
   // ── State ──
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef(null);
   
   // Pagination & Filters (Initialized from URL if present)
   const [page, setPage] = useState(parseInt(searchParams.get('page')) || 1);
@@ -97,6 +99,7 @@ const Transactions = () => {
   // Mini Analytics Summary
   const [summary, setSummary] = useState({ totalIncome: 0, totalExpense: 0 });
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [localSearch, setLocalSearch] = useState(filters.search);
 
   // Modal Form State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -111,6 +114,15 @@ const Transactions = () => {
     date: new Date().toISOString().split('T')[0],
     paymentMethod: 'regular'
   });
+  const [bulkTransactions, setBulkTransactions] = useState([
+    {
+      type: 'expense',
+      amount: '',
+      category: '',
+      description: '',
+      date: new Date().toISOString().split('T')[0]
+    }
+  ]);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   
@@ -160,32 +172,100 @@ const Transactions = () => {
     const customEndVal = searchParams.get('customEndDate') || '';
     const pageVal = parseInt(searchParams.get('page')) || 1;
 
-    if (
-      filters.search !== searchVal ||
-      filters.type !== typeVal ||
-      filters.category !== categoryVal ||
-      filters.dateRangeType !== dateRangeTypeVal ||
-      (dateRangeTypeVal === 'custom' && filters.customStartDate !== customStartVal && customStartVal) ||
-      (dateRangeTypeVal === 'custom' && filters.customEndDate !== customEndVal && customEndVal) ||
-      page !== pageVal
-    ) {
-      setFilters(prev => ({
-        ...prev,
-        search: searchVal,
-        type: typeVal,
-        category: categoryVal,
-        dateRangeType: dateRangeTypeVal,
-        customStartDate: dateRangeTypeVal === 'custom' && customStartVal ? customStartVal : prev.customStartDate,
-        customEndDate: dateRangeTypeVal === 'custom' && customEndVal ? customEndVal : prev.customEndDate,
-      }));
-      setPage(pageVal);
+    setFilters(prev => {
+      if (
+        prev.search !== searchVal ||
+        prev.type !== typeVal ||
+        prev.category !== categoryVal ||
+        prev.dateRangeType !== dateRangeTypeVal ||
+        (dateRangeTypeVal === 'custom' && prev.customStartDate !== customStartVal && customStartVal) ||
+        (dateRangeTypeVal === 'custom' && prev.customEndDate !== customEndVal && customEndVal)
+      ) {
+        setLocalSearch(searchVal);
+        return {
+          ...prev,
+          search: searchVal,
+          type: typeVal,
+          category: categoryVal,
+          dateRangeType: dateRangeTypeVal,
+          customStartDate: dateRangeTypeVal === 'custom' && customStartVal ? customStartVal : prev.customStartDate,
+          customEndDate: dateRangeTypeVal === 'custom' && customEndVal ? customEndVal : prev.customEndDate,
+        };
+      }
+      return prev;
+    });
+
+    setPage(prev => {
+      if (prev !== pageVal) {
+        return pageVal;
+      }
+      return prev;
+    });
+  }, [searchParams]);
+
+  // Debounce search filter updates to avoid heavy backend queries on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters(prev => {
+        if (prev.search !== localSearch) {
+          setPage(1);
+          return { ...prev, search: localSearch };
+        }
+        return prev;
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [localSearch]);
+
+  // Fetch search suggestions
+  useEffect(() => {
+    if (!localSearch || !localSearch.trim()) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
     }
-  }, [searchParams, filters, page]);
+
+    const fetchSuggestions = async () => {
+      try {
+        const res = await api.get(`/search?query=${encodeURIComponent(localSearch.trim())}`);
+        setSuggestions(res || []);
+        setShowSuggestions(true);
+      } catch (err) {
+        console.error('Failed to fetch suggestions:', err);
+      }
+    };
+
+    const timer = setTimeout(fetchSuggestions, 300);
+    return () => clearTimeout(timer);
+  }, [localSearch]);
+
+  // Click outside to close suggestions
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSelectSuggestion = (s) => {
+    if (s.type === 'category') {
+      setFilters(prev => ({ ...prev, category: s.id, search: '' }));
+      setLocalSearch('');
+    } else {
+      setLocalSearch(s.text);
+      setFilters(prev => ({ ...prev, search: s.text }));
+    }
+    setPage(1);
+    setShowSuggestions(false);
+  };
 
   // ── Fetch Data ──
-  const fetchTransactions = async () => {
+  const fetchTransactions = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = new URLSearchParams({ page, limit: 10 });
       if (filters.type) params.append('type', filters.type);
       if (filters.category) params.append('category', filters.category);
@@ -207,7 +287,7 @@ const Transactions = () => {
         : err.response?.data?.message || 'Failed to fetch transactions';
       toast.error(msg);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -249,21 +329,32 @@ const Transactions = () => {
     fetchSummary();
   }, [page, filters.type, filters.category, filters.search, filters.dateRangeType, filters.customStartDate, filters.customEndDate]);
 
+  const updateTimer = useRef(null);
   useEffect(() => {
     const handleUpdate = () => {
-      fetchTransactions();
-      fetchCategories();
-      fetchSummary();
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+      updateTimer.current = setTimeout(() => {
+        fetchTransactions(true);
+        fetchCategories();
+        fetchSummary();
+      }, 600);
     };
     window.addEventListener('financialDataUpdated', handleUpdate);
-    return () => window.removeEventListener('financialDataUpdated', handleUpdate);
+    return () => {
+      window.removeEventListener('financialDataUpdated', handleUpdate);
+      if (updateTimer.current) clearTimeout(updateTimer.current);
+    };
   }, []);
 
   // ── Actions ──
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters(prev => ({ ...prev, [name]: value }));
-    setPage(1);
+    if (name === 'search') {
+      setLocalSearch(value);
+    } else {
+      setFilters(prev => ({ ...prev, [name]: value }));
+      setPage(1);
+    }
   };
 
   const handleDateRangeTypeChange = (e) => {
@@ -296,8 +387,49 @@ const Transactions = () => {
         date: new Date().toISOString().split('T')[0],
         paymentMethod: 'regular'
       });
+      setBulkTransactions([
+        {
+          type: 'expense',
+          amount: '',
+          category: categories.length > 0 ? categories[0]._id : '',
+          description: '',
+          date: new Date().toISOString().split('T')[0]
+        }
+      ]);
     }
     setIsModalOpen(true);
+  };
+
+  const handleAddRow = () => {
+    setBulkTransactions([
+      ...bulkTransactions,
+      {
+        type: 'expense',
+        amount: '',
+        category: categories.length > 0 ? categories[0]._id : '',
+        description: '',
+        date: new Date().toISOString().split('T')[0]
+      }
+    ]);
+  };
+
+  const handleRemoveRow = (index) => {
+    const updated = [...bulkTransactions];
+    updated.splice(index, 1);
+    setBulkTransactions(updated);
+  };
+
+  const handleRowChange = (index, field, value) => {
+    const updated = [...bulkTransactions];
+    updated[index] = {
+      ...updated[index],
+      [field]: value
+    };
+    if (field === 'type') {
+      const filtered = categories.filter(c => c.type === value || c.type === 'both' || !c.type);
+      updated[index].category = filtered.length > 0 ? filtered[0]._id : '';
+    }
+    setBulkTransactions(updated);
   };
 
   const handleSubmit = async (e) => {
@@ -309,12 +441,10 @@ const Transactions = () => {
         await api.put(`/transactions/${editingId}`, formData);
         toast.success('Transaction updated');
       } else {
-        await api.post('/transactions', formData);
-        toast.success('Transaction added');
-        if (formData.paymentMethod === 'wallet') {
-          refreshUser();
-        }
+        await api.post('/transactions/bulk', { transactions: bulkTransactions });
+        toast.success(`${bulkTransactions.length} transactions added`);
       }
+      window.dispatchEvent(new CustomEvent('financialDataUpdated'));
       setIsModalOpen(false);
       fetchTransactions();
       fetchSummary();
@@ -335,9 +465,10 @@ const Transactions = () => {
         await api.delete(`/transactions/${confirmModal.id}`);
         toast.success('Transaction deleted');
       }
+      window.dispatchEvent(new CustomEvent('financialDataUpdated'));
       fetchTransactions();
       fetchSummary();
-    } catch (err) {
+    } catch {
       toast.error('Action failed');
     } finally {
       setDeleting(false);
@@ -364,6 +495,81 @@ const Transactions = () => {
     }
   };
 
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const params = new URLSearchParams({ page: 1, limit: 5000 });
+      if (filters.type) params.append('type', filters.type);
+      if (filters.category) params.append('category', filters.category);
+      if (filters.search) params.append('search', filters.search);
+      
+      const { startDate, endDate } = getDateRange(filters.dateRangeType, filters.customStartDate, filters.customEndDate);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      
+      const res = await api.get(`/transactions?${params.toString()}`);
+      const list = res.transactions || [];
+      
+      if (list.length === 0) {
+        toast.error('No transactions found to export');
+        return;
+      }
+      
+      // Convert list to CSV format
+      const headers = ['Description', 'Type', 'Category', 'Amount (INR)', 'Date', 'Payment Method'];
+      const rows = list.map(t => [
+        t.description || 'No description',
+        t.type || '',
+        t.category?.name || 'Uncategorized',
+        t.amount || 0,
+        t.date ? new Date(t.date).toLocaleDateString('en-IN') : new Date(t.createdAt).toLocaleDateString('en-IN'),
+        t.paymentMethod || 'regular'
+      ]);
+      
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+      ].join('\n');
+      
+      // Create blob and trigger download
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `transactions_export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success('Transactions exported successfully');
+    } catch (err) {
+      console.error('Export error:', err);
+      toast.error('Failed to export transactions');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+
+  const getPageNumbers = () => {
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      if (page <= 4) {
+        pages.push(1, 2, 3, 4, 5, '...', totalPages);
+      } else if (page >= totalPages - 3) {
+        pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+      } else {
+        pages.push(1, '...', page - 1, page, page + 1, '...', totalPages);
+      }
+    }
+    return pages;
+  };
+
+
   // ── Render ──
   return (
     <div className="transactions-page">
@@ -373,6 +579,9 @@ const Transactions = () => {
         <div style={{ display: 'flex', gap: '12px' }}>
           <Button variant="secondary" onClick={() => setIsCategoryManagerOpen(true)} icon={FolderEdit}>
             Categories
+          </Button>
+          <Button variant="secondary" onClick={handleExport} loading={exporting} icon={Download}>
+            Export
           </Button>
           <Button onClick={() => openModal()} icon={Plus}>
             Add New
@@ -406,15 +615,69 @@ const Transactions = () => {
         
         {/* Filters and Search toolbar */}
         <div className="tx-filters" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '16px', borderBottom: '1px solid var(--surface-border)', alignItems: 'center' }}>
-          <div className="tx-search" style={{ flex: '1 1 240px' }}>
+          <div className="tx-search" style={{ flex: '1 1 240px', position: 'relative' }}>
             <Search size={18} />
             <input 
               type="text" 
               name="search"
               placeholder="Search descriptions..." 
-              value={filters.search}
+              value={localSearch}
               onChange={handleFilterChange}
+              onFocus={() => localSearch && localSearch.trim() && setShowSuggestions(true)}
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <div 
+                ref={suggestionsRef} 
+                className="suggestions-dropdown" 
+                style={{ 
+                  position: 'absolute', 
+                  top: '100%', 
+                  left: 0, 
+                  right: 0, 
+                  zIndex: 100, 
+                  background: 'var(--surface)', 
+                  border: '1px solid var(--surface-border)', 
+                  borderRadius: '12px', 
+                  marginTop: '8px', 
+                  maxHeight: '260px', 
+                  overflowY: 'auto',
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+                  backdropFilter: 'blur(10px)'
+                }}
+              >
+                {suggestions.map((s, idx) => (
+                  <div 
+                    key={`${s.id}-${idx}`} 
+                    onClick={() => handleSelectSuggestion(s)}
+                    style={{ 
+                      padding: '10px 16px', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      borderBottom: idx === suggestions.length - 1 ? 'none' : '1px solid var(--surface-border)',
+                      transition: 'background 0.2s'
+                    }}
+                    className="suggestion-item-row"
+                  >
+                    <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                      {s.text}
+                    </span>
+                    <span style={{ 
+                      fontSize: '0.72rem', 
+                      color: s.type === 'category' ? 'var(--primary)' : 'var(--text-secondary)',
+                      background: s.type === 'category' ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.05)',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      textTransform: 'capitalize',
+                      fontWeight: 600
+                    }}>
+                      {s.type}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           
           <select name="type" className="tx-select" value={filters.type} onChange={handleFilterChange} style={{ minWidth: '130px' }}>
@@ -554,7 +817,7 @@ const Transactions = () => {
         {!loading && (
           <div className="tx-pagination">
             <span>Showing page {page} of {totalPages} ({totalItems} total)</span>
-            <div className="tx-page-controls">
+            <div className="tx-page-controls" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
               <button 
                 className="tx-page-btn"
                 disabled={page === 1}
@@ -562,6 +825,35 @@ const Transactions = () => {
               >
                 Previous
               </button>
+              
+              {getPageNumbers().map((p, idx) => {
+                if (p === '...') {
+                  return <span key={`ell-${idx}`} style={{ color: 'var(--text-secondary)', padding: '0 4px', fontSize: '0.9rem' }}>...</span>;
+                }
+                return (
+                  <button 
+                    key={p} 
+                    className={`tx-page-btn ${page === p ? 'active' : ''}`}
+                    onClick={() => setPage(p)}
+                    style={{
+                      padding: '6px 10px',
+                      fontSize: '0.85rem',
+                      fontWeight: page === p ? '600' : 'normal',
+                      backgroundColor: page === p ? 'var(--primary)' : 'var(--input-bg)',
+                      color: page === p ? '#ffffff' : 'var(--text-primary)',
+                      borderColor: page === p ? 'var(--primary)' : 'var(--surface-border)',
+                      minWidth: '32px',
+                      height: '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+
               <button 
                 className="tx-page-btn"
                 disabled={page === totalPages}
@@ -594,142 +886,230 @@ const Transactions = () => {
             )}
 
             <form className="tx-form" onSubmit={handleSubmit}>
-              
-              <div className="type-toggle">
-                <button type="button" 
-                  className={`type-btn expense ${formData.type === 'expense' ? 'active' : ''}`}
-                  onClick={() => setFormData({...formData, type: 'expense'})}
-                >
-                  Expense
-                </button>
-                <button type="button" 
-                  className={`type-btn income ${formData.type === 'income' ? 'active' : ''}`}
-                  onClick={() => setFormData({...formData, type: 'income'})}
-                >
-                  Income
-                </button>
-              </div>
-
-              <div>
-                <label>Amount (₹)</label>
-                <input 
-                  type="number" 
-                  min="1" 
-                  step="any"
-                  required
-                  placeholder="0.00"
-                  value={formData.amount}
-                  onChange={e => setFormData({...formData, amount: e.target.value})}
-                />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <label style={{ margin: 0 }}>Category</label>
-                  {!isAddingCategory ? (
-                    <button type="button" className="btn-text" style={{ fontSize: '0.8rem', color: 'var(--primary)', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setIsAddingCategory(true)}>
-                      <Plus size={14} /> New
+              {editingId ? (
+                <>
+                  <div className="type-toggle">
+                    <button type="button" 
+                      className={`type-btn expense ${formData.type === 'expense' ? 'active' : ''}`}
+                      onClick={() => setFormData({...formData, type: 'expense'})}
+                    >
+                      Expense
                     </button>
-                  ) : (
-                    <button type="button" className="btn-text" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }} onClick={() => setIsAddingCategory(false)}>
-                      Cancel
+                    <button type="button" 
+                      className={`type-btn income ${formData.type === 'income' ? 'active' : ''}`}
+                      onClick={() => setFormData({...formData, type: 'income'})}
+                    >
+                      Income
                     </button>
-                  )}
-                </div>
+                  </div>
 
-                {isAddingCategory ? (
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div>
+                    <label>Amount (₹)</label>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      step="any"
+                      required
+                      placeholder="0.00"
+                      value={formData.amount}
+                      onChange={e => setFormData({...formData, amount: e.target.value})}
+                    />
+                  </div>
+
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <label style={{ margin: 0 }}>Category</label>
+                      {!isAddingCategory ? (
+                        <button type="button" className="btn-text" style={{ fontSize: '0.8rem', color: 'var(--primary)', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setIsAddingCategory(true)}>
+                          <Plus size={14} /> New
+                        </button>
+                      ) : (
+                        <button type="button" className="btn-text" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }} onClick={() => setIsAddingCategory(false)}>
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+
+                    {isAddingCategory ? (
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. Groceries"
+                          value={newCategoryName}
+                          onChange={e => setNewCategoryName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddCategory();
+                            }
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                        <Button 
+                          onClick={handleAddCategory}
+                          loading={addingCategory}
+                          disabled={!newCategoryName.trim()}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    ) : (
+                      <select 
+                        required
+                        value={formData.category}
+                        onChange={e => setFormData({...formData, category: e.target.value})}
+                      >
+                        <option value="" disabled>Select a category</option>
+                        {categories
+                          .filter(c => c.type === formData.type || c.type === 'both' || !c.type) 
+                          .map(c => <option key={c._id} value={c._id}>{c.name}</option>)
+                        }
+                      </select>
+                    )}
+                  </div>
+
+                  <div>
+                    <label>Description</label>
                     <input 
                       type="text" 
-                      placeholder="e.g. Groceries"
-                      value={newCategoryName}
-                      onChange={e => setNewCategoryName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddCategory();
-                        }
-                      }}
-                      style={{ flex: 1 }}
+                      placeholder="What was this for?"
+                      value={formData.description}
+                      onChange={e => setFormData({...formData, description: e.target.value})}
                     />
-                    <Button 
-                      onClick={handleAddCategory}
-                      loading={addingCategory}
-                      disabled={!newCategoryName.trim()}
-                    >
-                      Add
-                    </Button>
                   </div>
-                ) : (
-                  <select 
-                    required
-                    value={formData.category}
-                    onChange={e => setFormData({...formData, category: e.target.value})}
+
+                  <div>
+                    <label>Date</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={formData.date}
+                      onChange={e => setFormData({...formData, date: e.target.value})}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ maxHeight: '380px', overflowY: 'auto', paddingRight: '6px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {bulkTransactions.map((txn, index) => (
+                      <div key={index} className="bulk-txn-row animate-fade-in" style={{
+                        padding: '16px',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid var(--surface-border)',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
+                        position: 'relative'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Transaction #{index + 1}</span>
+                          {bulkTransactions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRow(index)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--danger)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: '4px'
+                              }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          <div>
+                            <label>Type</label>
+                            <select
+                              value={txn.type}
+                              onChange={e => handleRowChange(index, 'type', e.target.value)}
+                              style={{ width: '100%' }}
+                            >
+                              <option value="expense">Expense</option>
+                              <option value="income">Income</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label>Amount (₹)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              step="any"
+                              required
+                              placeholder="0.00"
+                              value={txn.amount}
+                              onChange={e => handleRowChange(index, 'amount', e.target.value)}
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          <div>
+                            <label>Category</label>
+                            <select
+                              required
+                              value={txn.category}
+                              onChange={e => handleRowChange(index, 'category', e.target.value)}
+                              style={{ width: '100%' }}
+                            >
+                              <option value="" disabled>Select category</option>
+                              {categories
+                                .filter(c => c.type === txn.type || c.type === 'both' || !c.type)
+                                .map(c => <option key={c._id} value={c._id}>{c.name}</option>)
+                              }
+                            </select>
+                          </div>
+                          <div>
+                            <label>Date</label>
+                            <input
+                              type="date"
+                              required
+                              value={txn.date}
+                              onChange={e => handleRowChange(index, 'date', e.target.value)}
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label>Description</label>
+                          <input
+                            type="text"
+                            placeholder="What was this for?"
+                            value={txn.description}
+                            onChange={e => handleRowChange(index, 'description', e.target.value)}
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleAddRow}
+                    icon={Plus}
+                    style={{ borderStyle: 'dashed', borderWidth: '2px', justifyContent: 'center' }}
                   >
-                    <option value="" disabled>Select a category</option>
-                    {categories
-                      .filter(c => c.type === formData.type || c.type === 'both' || !c.type) 
-                      .map(c => <option key={c._id} value={c._id}>{c.name}</option>)
-                    }
-                  </select>
-                )}
-              </div>
-
-              <div>
-                <label>Description</label>
-                <input 
-                  type="text" 
-                  placeholder="What was this for?"
-                  value={formData.description}
-                  onChange={e => setFormData({...formData, description: e.target.value})}
-                />
-              </div>
-
-              {formData.type === 'expense' && (
-                <div>
-                  <label>Payment Method</label>
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                    <button
-                      type="button"
-                      className={`type-btn ${formData.paymentMethod === 'regular' ? 'active' : ''}`}
-                      onClick={() => setFormData({...formData, paymentMethod: 'regular'})}
-                      style={{ flex: 1 }}
-                    >
-                      Regular
-                    </button>
-                    <button
-                      type="button"
-                      className={`type-btn ${formData.paymentMethod === 'wallet' ? 'active' : ''}`}
-                      onClick={() => setFormData({...formData, paymentMethod: 'wallet'})}
-                      style={{ flex: 1 }}
-                    >
-                      Wallet
-                    </button>
-                  </div>
-                  {formData.paymentMethod === 'wallet' && (
-                    <div style={{ marginTop: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Available: ₹{user?.walletBalance?.toLocaleString() || 0}
-                    </div>
-                  )}
+                    Add Another Transaction
+                  </Button>
                 </div>
               )}
 
-              <div>
-                <label>Date</label>
-                <input 
-                  type="date" 
-                  required
-                  value={formData.date}
-                  onChange={e => setFormData({...formData, date: e.target.value})}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
                 <Button variant="secondary" fullWidth onClick={() => setIsModalOpen(false)}>
                   Cancel
                 </Button>
                 <Button type="submit" fullWidth loading={submitting}>
-                  Save Transaction
+                  {editingId ? 'Save Transaction' : `Save ${bulkTransactions.length} Transactions`}
                 </Button>
               </div>
             </form>

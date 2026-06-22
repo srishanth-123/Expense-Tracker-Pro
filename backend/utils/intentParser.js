@@ -8,7 +8,8 @@
  *   CREATE_TRANSACTION | CREATE_BUDGET | CREATE_CATEGORY |
  *   UPDATE_TRANSACTION | UPDATE_BUDGET | UPDATE_CATEGORY |
  *   DELETE_TRANSACTION | DELETE_BUDGET | DELETE_CATEGORY |
- *   ANALYTICS_QUERY    | GENERAL_CHAT  | CONFIRM | CANCEL
+ *   ANALYTICS_QUERY    | GENERAL_CHAT  | CONFIRM | CANCEL |
+ *   SEND_MONEY         | REQUEST_MONEY
  */
 
 const { callLLM } = require("../services/llmProvider");
@@ -56,7 +57,7 @@ Keep the active intent as "${pendingState.intent}" rather than changing it to ge
 Given the user's message, extract a structured JSON object with the following fields:
 
 {
-  "intent": "CREATE_TRANSACTION | CREATE_BUDGET | CREATE_CATEGORY | UPDATE_TRANSACTION | UPDATE_BUDGET | UPDATE_CATEGORY | DELETE_TRANSACTION | DELETE_BUDGET | DELETE_CATEGORY | ANALYTICS_QUERY | GENERAL_CHAT | CONFIRM | CANCEL",
+  "intent": "CREATE_TRANSACTION | CREATE_BUDGET | CREATE_CATEGORY | UPDATE_TRANSACTION | UPDATE_BUDGET | UPDATE_CATEGORY | DELETE_TRANSACTION | DELETE_BUDGET | DELETE_CATEGORY | ANALYTICS_QUERY | GENERAL_CHAT | CONFIRM | CANCEL | SEND_MONEY | REQUEST_MONEY",
   "confidence": 0.0 to 1.0,
   "entities": {
     "amount": number or null,
@@ -75,7 +76,8 @@ Given the user's message, extract a structured JSON object with the following fi
     "newCategoryName": string or null (CRITICAL: extract ONLY the clean new category name itself, e.g., "Travel", "Groceries"),
     "newLimit": number or null,
     "newMonth": number or null,
-    "newYear": number or null
+    "newYear": number or null,
+    "receiverName": string or null (For SEND_MONEY or REQUEST_MONEY, the other person's name)
   },
   "missingFields": ["field1", "field2"],
   "followUpQuestion": "string or null"
@@ -103,11 +105,13 @@ RULES:
 9. For ANALYTICS_QUERY, set analyticsType to the closest match.
 10. If the user says "yes", "confirm", "go ahead", "sure", "do it", "proceed" -> intent is CONFIRM.
 11. If the user says "no", "cancel", "never mind", "stop", "don't" -> intent is CANCEL.
-12. Map category names to the closest existing category when possible. Use exact name from the list.
-13. If you cannot determine the intent with reasonable confidence, use GENERAL_CHAT.
-14. For missingFields, list ONLY the required fields that are still unknown.
-15. Provide a natural, friendly followUpQuestion if there are missing fields.
-16. For categoryName, categoryNewName, and newCategoryName, extract ONLY the single-word or short phrase representing the category itself (e.g. "Travel", "Groceries", "Food"). NEVER extract the entire sentence, description, or verb phrases (e.g. do NOT extract "create a budget on travel", "spent on food", or "i need to create a budget on travel").
+12. "send", "pay", "transfer" -> SEND_MONEY. Require amount and receiverName.
+13. "request", "ask for" -> REQUEST_MONEY. Require amount and receiverName.
+14. Map category names to the closest existing category when possible. Use exact name from the list.
+15. If you cannot determine the intent with reasonable confidence, use GENERAL_CHAT.
+16. For missingFields, list ONLY the required fields that are still unknown.
+17. Provide a natural, friendly followUpQuestion if there are missing fields.
+18. For categoryName, categoryNewName, and newCategoryName, extract ONLY the single-word or short phrase representing the category itself (e.g. "Travel", "Groceries", "Food"). NEVER extract the entire sentence, description, or verb phrases (e.g. do NOT extract "create a budget on travel", "spent on food", or "i need to create a budget on travel").
 
 User's existing categories:
 ${categoryList}
@@ -117,6 +121,47 @@ Current month/year: ${currentMonth}/${currentYear}
 ${pendingStateContext || ""}
 
 Return ONLY valid JSON. No markdown, no explanation.`;
+}
+
+function isFastPathGeneralChat(message, pendingState = null) {
+    if (pendingState) return false;
+
+    const lower = message.trim().toLowerCase();
+    
+    // 1. Simple greetings, small talk, or thanks
+    const greetings = /^(hi|hello|hey|greetings|hola|good\s+(morning|afternoon|evening)|yo|whats\s*up|sup|help|info|thanks|thank\s+you)\b/i;
+    if (greetings.test(lower)) return true;
+
+    // 2. Questions about application features / general info
+    const isQuestionOrInfo = /^(how|what|why|who|where|explain|describe|tell|show|list|about|info|guide|can\s+you|please\s+explain|give\s+me\s+info)\b/i.test(lower);
+    
+    // Check for transaction mutation keywords (exclude these from fast path)
+    const hasMutationKeywords = /\b(add|create|track|insert|record|spent|received|spend|spendings|buy|bought|pay|paid|log|delete|remove|erase|void|edit|change|update|rename|modify|adjust|correct|send|transfer|request)\b/i.test(lower);
+    
+    // Check if there is any numerical amount (which usually signals a transaction creation/update/limit)
+    const hasNumbers = /\b\d+\b/.test(lower);
+    const isSystemLimitQuestion = /\b(10000|499|100)\b/.test(lower) && (lower.includes("limit") || lower.includes("fail") || lower.includes("withdraw") || lower.includes("subscription") || lower.includes("pro") || lower.includes("upgrade") || lower.includes("cost") || lower.includes("fee"));
+    
+    if (isQuestionOrInfo) {
+        if (hasNumbers && !isSystemLimitQuestion) {
+            return false; 
+        }
+        
+        const isDirectCommand = /^(add|create|delete|remove|update|change|edit|track|spent|send|pay|request|transfer)\b/i.test(lower);
+        if (isDirectCommand) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // 3. General chat questions that don't start with question words but are about app concepts
+    const appConcepts = /\b(wallet|withdraw|subscription|pro|tier|limit|settle|split|saga|razorpay|double-caching|caching|security|lockout|rate\s+limit|insights|bullmq|background|mongodb|redis|webhook|payout|chatbot|finpilot|bot)\b/i;
+    if (appConcepts.test(lower) && !hasNumbers && !hasMutationKeywords) {
+        return true;
+    }
+
+    return false;
 }
 
 /**
@@ -148,6 +193,12 @@ async function parseIntent(message, userId, pendingState = null) {
             return { ...fallback, intent: "CANCEL", confidence: 1.0 };
         }
 
+        // Fast-path bypass for general conversational questions/greetings
+        if (isFastPathGeneralChat(message, pendingState)) {
+            logger.info(`[IntentParser] Fast-path routing to GENERAL_CHAT for message: "${message}"`);
+            return fallback;
+        }
+
         const systemPrompt = await buildIntentSystemPrompt(userId, pendingState);
         const rawResponse = await callLLM(systemPrompt, message, true);
 
@@ -174,7 +225,8 @@ async function parseIntent(message, userId, pendingState = null) {
             "CREATE_TRANSACTION", "CREATE_BUDGET", "CREATE_CATEGORY",
             "UPDATE_TRANSACTION", "UPDATE_BUDGET", "UPDATE_CATEGORY",
             "DELETE_TRANSACTION", "DELETE_BUDGET", "DELETE_CATEGORY",
-            "ANALYTICS_QUERY", "GENERAL_CHAT", "CONFIRM", "CANCEL"
+            "ANALYTICS_QUERY", "GENERAL_CHAT", "CONFIRM", "CANCEL",
+            "SEND_MONEY", "REQUEST_MONEY"
         ];
 
         if (!parsed.intent || !validIntents.includes(parsed.intent)) {

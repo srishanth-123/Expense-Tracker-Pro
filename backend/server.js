@@ -17,104 +17,100 @@ const connectDB = require("./config/db");
 
 validateEnv();
 
+const app = express();
+
+// ─── Production Hardening ─────────────────────────────────────────────────────
+app.set('trust proxy', 1); // Trust first proxy (Nginx, AWS ALB, Render, etc.)
+
+// ─── Security Middleware ──────────────────────────────────────────────────────
+app.use(helmet());
+
+// ─── Response Compression (gzip/deflate) ──────────────────────────────────────
+app.use(compressionMiddleware);
+
+// ─── CORS Configuration ────────────────────────────────────────────────────────
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production'
+        ? (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
+        : (process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-idempotency-key']
+}));
+
+// Cookie parser (must come before routes)
+app.use(cookieParser());
+
+// ─── Request Logging (Morgan → Winston) ───────────────────────────────────────
+app.use(morgan("combined", {
+    stream: { write: (message) => logger.info(message.trim()) }
+}));
+
+// ─── Rate Limiting & Body Parsing ─────────────────────────────────────────────
+app.use(generalLimiter);
+app.use(express.json({ limit: "5mb" }));                        // Supports Base64 profile pic uploads
+app.use(express.urlencoded({ extended: true, limit: "5mb" })); // Supports URL-encoded payload
+
+// ─── Fix: Express 5 req.query is read-only getter ─────────────────────────────
+app.use((req, res, next) => {
+    Object.defineProperty(req, 'query', {
+        value: { ...req.query },
+        writable: true,
+        configurable: true,
+        enumerable: true
+    });
+    next();
+});
+
+// ─── Data Sanitization ────────────────────────────────────────────────────────
+app.use(mongoSanitize()); // Prevent NoSQL Injection
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+app.get("/api/health", (req, res) => {
+    const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
+    res.json({
+        success: true,
+        message: "Server is healthy",
+        data: { status: "ok", db: dbStatus, uptime: process.uptime().toFixed(2) + "s" }
+    });
+});
+
+// ─── API Routes (v1) ─────────────────────────────────────────────────────────
+app.use("/api/v1/auth",         require("./routes/authRoutes"));
+app.use("/api/v1/transactions", require("./routes/transactionRoutes"));
+app.use("/api/v1/categories",   require("./routes/categoryRoutes"));
+app.use("/api/v1/budgets",      require("./routes/budgetRoutes"));
+app.use("/api/v1/analytics",    require("./routes/analyticsRoutes"));
+app.use("/api/v1/search",       require("./routes/searchRoutes"));
+app.use("/api/v1/wallet",       require("./routes/walletRoutes"));
+app.use("/api/v1/split",        require("./routes/splitRoutes"));
+app.use("/api/v1/payment",      require("./routes/paymentRoutes"));
+app.use("/api/v1/notifications", require("./routes/notificationRoutes"));
+app.use("/api/v1/chat",          require("./routes/chatRoutes"));
+app.use("/api/v1/money-requests", require("./routes/moneyRequestRoutes"));
+
+// ─── Legacy route aliases (keep old /api/* working during migration) ──────────
+app.use("/api/auth",         require("./routes/authRoutes"));
+app.use("/api/transactions", require("./routes/transactionRoutes"));
+app.use("/api/categories",   require("./routes/categoryRoutes"));
+app.use("/api/budgets",      require("./routes/budgetRoutes"));
+app.use("/api/analytics",    require("./routes/analyticsRoutes"));
+app.use("/api/search",       require("./routes/searchRoutes"));
+app.use("/api/wallet",       require("./routes/walletRoutes"));
+app.use("/api/split",        require("./routes/splitRoutes"));
+app.use("/api/payment",      require("./routes/paymentRoutes"));
+app.use("/api/notifications", require("./routes/notificationRoutes"));
+app.use("/api/chat",         require("./routes/chatRoutes"));
+app.use("/api/money-requests", require("./routes/moneyRequestRoutes"));
+
+// ─── Global Error Handler ─────────────────────────────────────────────────────
+const errorHandler = require("./middleware/errorMiddleware");
+app.use(errorHandler);
+
 // ─── Start Server Async ───────────────────────────────────────────────────────
 const startServer = async () => {
     try {
         await connectDB();
-        
-        const app = express();
-
-        // ─── Production Hardening ─────────────────────────────────────────────────────
-        app.set('trust proxy', 1); // Trust first proxy (Nginx, AWS ALB, Render, etc.)
-
-        // ─── Security Middleware ──────────────────────────────────────────────────────
-        app.use(helmet());
-
-        // ─── Response Compression (gzip/deflate) ──────────────────────────────────────
-        app.use(compressionMiddleware);
-
-        // ─── CORS Configuration ────────────────────────────────────────────────────────
-        // In production, only allow the configured FRONTEND_URL (no localhost fallbacks for security)
-        const corsOrigin = process.env.NODE_ENV === 'production'
-            ? (process.env.FRONTEND_URL || (() => {
-                console.error('[FATAL] FRONTEND_URL must be set in production mode for CORS security');
-                process.exit(1);
-            })())
-            : (process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']);
-
-        app.use(cors({
-            origin: corsOrigin,
-            credentials: true,
-            methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-            allowedHeaders: ['Content-Type', 'Authorization', 'x-idempotency-key']
-        }));
-
-        // Cookie parser (must come before routes)
-        app.use(cookieParser());
-
-        // ─── Request Logging (Morgan → Winston) ───────────────────────────────────────
-        app.use(morgan("combined", {
-            stream: { write: (message) => logger.info(message.trim()) }
-        }));
-
-        // ─── Rate Limiting & Body Parsing ─────────────────────────────────────────────
-        app.use(generalLimiter);
-        app.use(express.json({ limit: "5mb" }));                        // Supports Base64 profile pic uploads
-        app.use(express.urlencoded({ extended: true, limit: "5mb" })); // Supports URL-encoded payload
-
-        // ─── Fix: Express 5 req.query is read-only getter ─────────────────────────────
-        app.use((req, res, next) => {
-            Object.defineProperty(req, 'query', {
-                value: { ...req.query },
-                writable: true,
-                configurable: true,
-                enumerable: true
-            });
-            next();
-        });
-
-        // ─── Data Sanitization ────────────────────────────────────────────────────────
-        app.use(mongoSanitize()); // Prevent NoSQL Injection
-
-        // ─── Health Check ─────────────────────────────────────────────────────────────
-        app.get("/api/health", (req, res) => {
-            const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
-            res.json({
-                success: true,
-                message: "Server is healthy",
-                data: { status: "ok", db: dbStatus, uptime: process.uptime().toFixed(2) + "s" }
-            });
-        });
-
-        // ─── API Routes (v1) ─────────────────────────────────────────────────────────
-        app.use("/api/v1/auth",         require("./routes/authRoutes"));
-        app.use("/api/v1/transactions", require("./routes/transactionRoutes"));
-        app.use("/api/v1/categories",   require("./routes/categoryRoutes"));
-        app.use("/api/v1/budgets",      require("./routes/budgetRoutes"));
-        app.use("/api/v1/analytics",    require("./routes/analyticsRoutes"));
-        app.use("/api/v1/search",       require("./routes/searchRoutes"));
-        app.use("/api/v1/wallet",       require("./routes/walletRoutes"));
-        app.use("/api/v1/split",        require("./routes/splitRoutes"));
-        app.use("/api/v1/payment",      require("./routes/paymentRoutes"));
-        app.use("/api/v1/notifications", require("./routes/notificationRoutes"));
-        app.use("/api/v1/chat",          require("./routes/chatRoutes"));
-
-        // ─── Legacy route aliases (keep old /api/* working during migration) ──────────
-        app.use("/api/auth",         require("./routes/authRoutes"));
-        app.use("/api/transactions", require("./routes/transactionRoutes"));
-        app.use("/api/categories",   require("./routes/categoryRoutes"));
-        app.use("/api/budgets",      require("./routes/budgetRoutes"));
-        app.use("/api/analytics",    require("./routes/analyticsRoutes"));
-        app.use("/api/search",       require("./routes/searchRoutes"));
-        app.use("/api/wallet",       require("./routes/walletRoutes"));
-        app.use("/api/split",        require("./routes/splitRoutes"));
-        app.use("/api/payment",      require("./routes/paymentRoutes"));
-        app.use("/api/notifications", require("./routes/notificationRoutes"));
-        app.use("/api/chat",         require("./routes/chatRoutes"));
-
-        // ─── Global Error Handler ─────────────────────────────────────────────────────
-        const errorHandler = require("./middleware/errorMiddleware");
-        app.use(errorHandler);
 
         // ─── Start Server ─────────────────────────────────────────────────────────────
         const http = require('http');
@@ -126,13 +122,19 @@ const startServer = async () => {
 
         // ─── Initialize BullMQ Queue (lazy — only if ioredis is configured) ───────────
         const { insightsQueue, insightsWorker } = require("./queues/insightsQueue");
+        const { subscriptionCronQueue, subscriptionCronWorker } = require("./queues/subscriptionCron");
         if (insightsQueue) {
             logger.info("📋 BullMQ AI insights queue active");
         }
+        if (subscriptionCronQueue) {
+            logger.info("📋 BullMQ Subscription Cron active");
+        }
 
-        server.listen(PORT, () =>
-            logger.info(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`)
-        );
+        if (process.env.NODE_ENV !== 'test') {
+            server.listen(PORT, () =>
+                logger.info(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`)
+            );
+        }
 
         // ─── Graceful Shutdown ────────────────────────────────────────────────────────
         const shutdown = async (signal) => {
@@ -150,7 +152,8 @@ const startServer = async () => {
 
                 // Close BullMQ worker
                 try {
-                    if (insightsWorker) { await insightsWorker.close(); logger.info("BullMQ worker closed."); }
+                    if (insightsWorker) { await insightsWorker.close(); logger.info("BullMQ AI insights worker closed."); }
+                    if (subscriptionCronWorker) { await subscriptionCronWorker.close(); logger.info("BullMQ Subscription worker closed."); }
                 } catch (err) {
                     logger.error("Error closing BullMQ worker:", err.message);
                 }
@@ -199,3 +202,5 @@ const startServer = async () => {
 };
 
 startServer();
+
+module.exports = app;

@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useCallback, useContext } from 'react';
+import { createContext, useState, useEffect, useCallback, useContext } from 'react';
 import * as chatbotApi from '../services/chatbotApi';
 import { AuthContext } from './AuthContext';
 
@@ -13,9 +13,11 @@ export const ChatProvider = ({ children }) => {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const userId = user?._id;
+
   // Fetch all sessions
   const fetchSessions = useCallback(async (selectFirst = false) => {
-    if (!user) return;
+    if (!userId) return;
     try {
       setSessionsLoading(true);
       const data = await chatbotApi.getSessions();
@@ -35,7 +37,7 @@ export const ChatProvider = ({ children }) => {
     } finally {
       setSessionsLoading(false);
     }
-  }, [user]);
+  }, [userId]);
 
   // Fetch messages for active session
   const fetchMessages = useCallback(async (sessionId) => {
@@ -55,14 +57,14 @@ export const ChatProvider = ({ children }) => {
 
   // Initial load
   useEffect(() => {
-    if (user) {
+    if (userId) {
       fetchSessions(true);
     } else {
       setSessions([]);
       setActiveSessionId(null);
       setMessages([]);
     }
-  }, [user, fetchSessions]);
+  }, [userId, fetchSessions]);
 
   // Load messages when active session changes
   useEffect(() => {
@@ -157,13 +159,13 @@ export const ChatProvider = ({ children }) => {
             detail: { actionType: parsed.actionType }
           }));
         }
-      } catch (e) {
+      } catch {
         // Content is not JSON, normal text response
       }
 
     } catch (err) {
       const serverMsg = err.message || "Sorry, I ran into an error. Please try again.";
-      setMessages(prev => [...prev, { role: 'model', content: serverMsg }]);
+      setMessages(prev => [...prev, { role: 'model', content: serverMsg, createdAt: new Date().toISOString() }]);
     } finally {
       setLoading(false);
     }

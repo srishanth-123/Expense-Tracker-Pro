@@ -23,6 +23,28 @@ const validateEnv = () => {
         }
     });
 
+    // Email (Resend) — without these, payment-success emails are silently skipped
+    if (!process.env.RESEND_API_KEY) {
+        console.warn('[WARNING] RESEND_API_KEY is missing. Transactional emails (e.g. payment receipts) will be disabled.');
+    } else if (!process.env.EMAIL_FROM) {
+        console.warn('[WARNING] EMAIL_FROM is missing. Transactional emails will be disabled until a sender address is set.');
+    }
+
+    // AI assistant / insights — without a configured provider key, the app
+    // falls back to rule-based logic (features still work, just non-AI).
+    const aiProvider = (process.env.AI_PROVIDER || 'openai').toLowerCase();
+    const aiKeyByProvider = {
+        openai: 'OPENAI_API_KEY',
+        anthropic: 'ANTHROPIC_API_KEY',
+        gemini: 'GEMINI_API_KEY'
+    };
+    const expectedAiKey = aiKeyByProvider[aiProvider];
+    if (!expectedAiKey) {
+        console.warn(`[WARNING] Unknown AI_PROVIDER "${aiProvider}". Expected one of: openai, anthropic, gemini. AI features will use rule-based fallback.`);
+    } else if (!process.env[expectedAiKey]) {
+        console.warn(`[WARNING] ${expectedAiKey} is missing for AI_PROVIDER="${aiProvider}". AI features will use rule-based fallback.`);
+    }
+
     // Production-specific warnings
     if (process.env.NODE_ENV === 'production') {
         if (!process.env.FRONTEND_URL) {

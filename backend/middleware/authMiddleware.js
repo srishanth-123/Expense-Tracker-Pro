@@ -23,6 +23,13 @@ const protect = async(req, res, next) => {
             return res.status(401).json({ success: false, message: "Invalid token. User not found." });
         }
         
+        // Auto-expiry check
+        if (user.plan === "PRO" && user.subscriptionEndDate && new Date() > user.subscriptionEndDate) {
+            user.plan = "FREE";
+            user.subscriptionStatus = "EXPIRED";
+            await user.save();
+        }
+
         req.user = user;
         next();
     } catch (error) {
