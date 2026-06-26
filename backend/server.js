@@ -88,6 +88,9 @@ app.use("/api/v1/payment",      require("./routes/paymentRoutes"));
 app.use("/api/v1/notifications", require("./routes/notificationRoutes"));
 app.use("/api/v1/chat",          require("./routes/chatRoutes"));
 app.use("/api/v1/money-requests", require("./routes/moneyRequestRoutes"));
+app.use("/api/v1/recurring",     require("./routes/recurringRoutes"));
+app.use("/api/v1/savings-goals", require("./routes/savingsGoalRoutes"));
+app.use("/api/v1/ocr",           require("./routes/ocrRoutes"));
 
 // ─── Legacy route aliases (keep old /api/* working during migration) ──────────
 app.use("/api/auth",         require("./routes/authRoutes"));
@@ -102,6 +105,9 @@ app.use("/api/payment",      require("./routes/paymentRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
 app.use("/api/chat",         require("./routes/chatRoutes"));
 app.use("/api/money-requests", require("./routes/moneyRequestRoutes"));
+app.use("/api/recurring",     require("./routes/recurringRoutes"));
+app.use("/api/savings-goals", require("./routes/savingsGoalRoutes"));
+app.use("/api/ocr",           require("./routes/ocrRoutes"));
 
 // ─── Global Error Handler ─────────────────────────────────────────────────────
 const errorHandler = require("./middleware/errorMiddleware");

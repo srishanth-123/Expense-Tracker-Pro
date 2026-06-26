@@ -27,7 +27,10 @@ const notificationSchema = new mongoose.Schema(
                 "MONEY_REQUEST_ACCEPTED",
                 "MONEY_REQUEST_REJECTED",
                 "P2P_TRANSFER_SENT",
-                "P2P_TRANSFER_RECEIVED"
+                "P2P_TRANSFER_RECEIVED",
+                "SUBSCRIPTION_ALERT",
+                "SAVINGS_GOAL_COMPLETE",
+                "RECURRING_TRANSACTION"
             ],
             required: true,
         },

@@ -15,7 +15,8 @@ const{
     spendingPrediction,
     aiInsights,
     incomeExpenseTrend,
-    getFinancialHealthScore
+    getFinancialHealthScore,
+    spendingForecast
 }=require("../controllers/analyticsController");
 
 router.get("/income-expense-trend",protect,incomeExpenseTrend);
@@ -31,6 +32,6 @@ router.get("/heatmap",protect,requirePro,dailyHeatmap);
 router.get("/prediction",protect,requirePro,spendingPrediction);
 router.get("/ai-insights",protect,requirePro,aiInsights);
 router.get("/financial-health",protect,requirePro,getFinancialHealthScore);
+router.get("/forecast",protect,requirePro,spendingForecast);
 
 module.exports=router;
-// Trigger restart

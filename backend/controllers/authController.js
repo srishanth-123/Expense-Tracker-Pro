@@ -4,12 +4,15 @@ const crypto = require("crypto");
 const generateToken = require("../utils/generateToken");
 const logger = require("../utils/logger");
 const redis = require("../config/redis");
-const { sendWelcomeEmail, sendPasswordResetEmail } = require("../services/emailService");
+const { sendWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail, sendSecurityAlertEmail } = require("../services/emailService");
+const { createAuditLog, parseUserAgent } = require("../utils/auditLog");
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_DURATION_SECONDS = 15 * 60; // 15 minutes
 const PASSWORD_RESET_EXPIRY_MINUTES = 15;
+const EMAIL_VERIFICATION_EXPIRY_MINUTES = 60;
+const MAX_SESSIONS = 5; // Max concurrent sessions per user
 
 const sendTokenCookie = (res, token) => {
     let maxAge = 24 * 60 * 60 * 1000; // 24 hours default
@@ -44,7 +47,19 @@ exports.registerUser = async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         const hashed = await bcrypt.hash(password, salt);
-        const user = await User.create({ name, email, password: hashed });
+        
+        // Generate email verification token
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        const hashedVerificationToken = crypto.createHash("sha256").update(verificationToken).digest("hex");
+        
+        const user = await User.create({ 
+            name, 
+            email, 
+            password: hashed,
+            emailVerified: false,
+            emailVerificationToken: hashedVerificationToken,
+            emailVerificationExpires: Date.now() + EMAIL_VERIFICATION_EXPIRY_MINUTES * 60 * 1000
+        });
 
         // Auto-link unregistered splits matching this user's email
         try {
@@ -95,9 +110,29 @@ exports.registerUser = async (req, res) => {
 
         const token = generateToken(user.id);
 
+        // Create session
+        const { device, browser } = parseUserAgent(req.headers["user-agent"]);
+        user.activeSessions = [{
+            token,
+            device,
+            browser,
+            ip: req.ip || "Unknown",
+            loginAt: new Date(),
+            lastActive: new Date()
+        }];
+        await user.save({ validateBeforeSave: false });
+
         sendWelcomeEmail(user);
+        
+        // Send verification email
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+        const verifyUrl = `${frontendUrl}/verify-email/${verificationToken}`;
+        sendVerificationEmail(user, verifyUrl, EMAIL_VERIFICATION_EXPIRY_MINUTES);
 
         sendTokenCookie(res, token);
+
+        // Audit log
+        createAuditLog(user.id, "REGISTER", req, `New account registered: ${email}`);
 
         res.status(201).json({
             success: true,
@@ -112,6 +147,7 @@ exports.registerUser = async (req, res) => {
                 subscriptionEndDate: user.subscriptionEndDate,
                 walletBalance: user.walletBalance, 
                 profilePic: user.profilePic || "",
+                emailVerified: user.emailVerified,
                 token 
             }
         });
@@ -159,11 +195,13 @@ exports.loginUser = async (req, res) => {
                 const remaining = MAX_LOGIN_ATTEMPTS - attempts;
                 if (remaining <= 0) {
                     logger.warn(`Account locked: ${email} after ${attempts} failed attempts`);
+                    createAuditLog(user._id, "LOGIN_FAILED", req, `Account locked after ${attempts} attempts`);
                     return res.status(429).json({
                         success: false,
                         message: "Too many failed attempts. Account locked for 15 minutes."
                     });
                 }
+                createAuditLog(user._id, "LOGIN_FAILED", req, `Failed login attempt (${attempts}/${MAX_LOGIN_ATTEMPTS})`);
                 return res.status(401).json({
                     success: false,
                     message: `Invalid credentials. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`
@@ -183,7 +221,30 @@ exports.loginUser = async (req, res) => {
         }
 
         const token = generateToken(user.id);
+        
+        // Session management — track this login
+        const { device, browser } = parseUserAgent(req.headers["user-agent"]);
+        const newSession = {
+            token,
+            device,
+            browser,
+            ip: req.ip || "Unknown",
+            loginAt: new Date(),
+            lastActive: new Date()
+        };
+        
+        // Keep only last MAX_SESSIONS sessions (FIFO)
+        if (!user.activeSessions) user.activeSessions = [];
+        if (user.activeSessions.length >= MAX_SESSIONS) {
+            user.activeSessions = user.activeSessions.slice(-MAX_SESSIONS + 1);
+        }
+        user.activeSessions.push(newSession);
+        await user.save({ validateBeforeSave: false });
+
         sendTokenCookie(res, token);
+
+        // Audit log
+        createAuditLog(user._id, "LOGIN", req, `Login from ${device} / ${browser}`);
 
         res.json({
             success: true,
@@ -198,12 +259,70 @@ exports.loginUser = async (req, res) => {
                 subscriptionEndDate: user.subscriptionEndDate,
                 walletBalance: user.walletBalance, 
                 profilePic: user.profilePic || "",
+                emailVerified: user.emailVerified,
                 token 
             }
         });
     } catch (error) {
         logger.error("Login error:", error);
         res.status(500).json({ success: false, message: "Server error during login" });
+    }
+};
+
+// ─── Verify Email ─────────────────────────────────────────────────────────────
+exports.verifyEmail = async (req, res) => {
+    try {
+        const { token } = req.params;
+        const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+        
+        const user = await User.findOne({
+            emailVerificationToken: hashedToken,
+            emailVerificationExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: "Invalid or expired verification link" });
+        }
+
+        user.emailVerified = true;
+        user.emailVerificationToken = null;
+        user.emailVerificationExpires = null;
+        await user.save({ validateBeforeSave: false });
+
+        createAuditLog(user._id, "EMAIL_VERIFIED", req, "Email verified successfully");
+
+        res.json({ success: true, message: "Email verified successfully" });
+    } catch (error) {
+        logger.error("Email verification error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ─── Resend Verification Email ────────────────────────────────────────────────
+exports.resendVerificationEmail = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+        
+        if (user.emailVerified) {
+            return res.status(400).json({ success: false, message: "Email is already verified" });
+        }
+
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        const hashedToken = crypto.createHash("sha256").update(verificationToken).digest("hex");
+
+        user.emailVerificationToken = hashedToken;
+        user.emailVerificationExpires = Date.now() + EMAIL_VERIFICATION_EXPIRY_MINUTES * 60 * 1000;
+        await user.save({ validateBeforeSave: false });
+
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+        const verifyUrl = `${frontendUrl}/verify-email/${verificationToken}`;
+        sendVerificationEmail(user, verifyUrl, EMAIL_VERIFICATION_EXPIRY_MINUTES);
+
+        res.json({ success: true, message: "Verification email sent" });
+    } catch (error) {
+        logger.error("Resend verification email error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
@@ -230,6 +349,7 @@ exports.forgotPassword = async (req, res) => {
         const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
         sendPasswordResetEmail(user, resetUrl, PASSWORD_RESET_EXPIRY_MINUTES);
+        createAuditLog(user._id, "PASSWORD_RESET_REQUEST", req, "Password reset link requested");
 
         if (process.env.NODE_ENV !== "production") {
             genericResponse.resetUrl = resetUrl;
@@ -262,7 +382,11 @@ exports.resetPassword = async (req, res) => {
         user.password = await bcrypt.hash(password, salt);
         user.passwordResetToken = null;
         user.passwordResetExpires = null;
+        // Invalidate all sessions on password reset
+        user.activeSessions = [];
         await user.save();
+
+        createAuditLog(user._id, "PASSWORD_RESET_COMPLETE", req, "Password reset completed — all sessions revoked");
 
         res.json({ success: true, message: "Password reset successful" });
     } catch (error) {
@@ -271,8 +395,64 @@ exports.resetPassword = async (req, res) => {
     }
 };
 
+// ─── Change Password (authenticated) ─────────────────────────────────────────
+exports.changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ success: false, message: "Current password and new password are required" });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({ success: false, message: "New password must be at least 8 characters" });
+        }
+
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, message: "Current password is incorrect" });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        await user.save();
+
+        createAuditLog(user._id, "PASSWORD_CHANGE", req, "Password changed via profile settings");
+        
+        // Send security alert
+        const { device } = parseUserAgent(req.headers["user-agent"]);
+        sendSecurityAlertEmail(user, {
+            action: "Password Changed",
+            device,
+            ip: req.ip,
+            time: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+        });
+
+        res.json({ success: true, message: "Password changed successfully" });
+    } catch (error) {
+        logger.error("Change password error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // ─── Logout ───────────────────────────────────────────────────────────────────
-exports.logoutUser = (req, res) => {
+exports.logoutUser = async (req, res) => {
+    try {
+        // Remove current session from active sessions
+        const token = req.cookies?.token || (req.headers.authorization?.startsWith('Bearer') ? req.headers.authorization.split(' ')[1] : null);
+        if (token && req.user) {
+            await User.findByIdAndUpdate(req.user._id, {
+                $pull: { activeSessions: { token } }
+            });
+            createAuditLog(req.user._id, "LOGOUT", req, "User logged out");
+        }
+    } catch (err) {
+        logger.error("Error removing session on logout:", err.message);
+    }
+
     res.clearCookie("token", {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
@@ -281,10 +461,101 @@ exports.logoutUser = (req, res) => {
     res.json({ success: true, message: "Logged out successfully" });
 };
 
+// ─── Logout All Devices ───────────────────────────────────────────────────────
+exports.logoutAllDevices = async (req, res) => {
+    try {
+        await User.findByIdAndUpdate(req.user._id, { activeSessions: [] });
+        createAuditLog(req.user._id, "LOGOUT_ALL_DEVICES", req, "All sessions revoked");
+
+        res.clearCookie("token", {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax"
+        });
+        res.json({ success: true, message: "Logged out from all devices successfully" });
+    } catch (error) {
+        logger.error("Logout all devices error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ─── Revoke Specific Session ──────────────────────────────────────────────────
+exports.revokeSession = async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        await User.findByIdAndUpdate(req.user._id, {
+            $pull: { activeSessions: { _id: sessionId } }
+        });
+        createAuditLog(req.user._id, "SESSION_REVOKED", req, `Session ${sessionId} revoked`);
+        res.json({ success: true, message: "Session revoked successfully" });
+    } catch (error) {
+        logger.error("Revoke session error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ─── Get Active Sessions ──────────────────────────────────────────────────────
+exports.getActiveSessions = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select("activeSessions");
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+        
+        // Return sessions without the token for security
+        const sessions = (user.activeSessions || []).map(s => ({
+            _id: s._id,
+            device: s.device,
+            browser: s.browser,
+            ip: s.ip,
+            loginAt: s.loginAt,
+            lastActive: s.lastActive,
+            isCurrent: s.token === (req.cookies?.token || (req.headers.authorization?.startsWith('Bearer') ? req.headers.authorization.split(' ')[1] : null))
+        }));
+        
+        res.json({ success: true, message: "Active sessions retrieved", data: sessions });
+    } catch (error) {
+        logger.error("Get sessions error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ─── Get Audit Logs ───────────────────────────────────────────────────────────
+exports.getAuditLogs = async (req, res) => {
+    try {
+        const AuditLog = require("../models/AuditLog");
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+
+        const [logs, total] = await Promise.all([
+            AuditLog.find({ user: req.user._id })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            AuditLog.countDocuments({ user: req.user._id })
+        ]);
+
+        res.json({
+            success: true,
+            message: "Audit logs retrieved",
+            data: {
+                logs,
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error) {
+        logger.error("Get audit logs error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // ─── Get Profile ──────────────────────────────────────────────────────────────
 exports.getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.user._id).select("-password");
+        const user = await User.findById(req.user._id).select("-password -activeSessions -emailVerificationToken -emailVerificationExpires -passwordResetToken -passwordResetExpires");
         if (!user) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
@@ -375,11 +646,14 @@ exports.updateProfile = async (req, res) => {
             return res.status(400).json({ success: false, message: "No valid fields to update." });
         }
 
-        const updatedUser = await User.findByIdAndUpdate(userId, updateData, { new: true, runValidators: true }).select("-password");
+        const updatedUser = await User.findByIdAndUpdate(userId, updateData, { new: true, runValidators: true }).select("-password -activeSessions");
 
         if (!updatedUser) {
             return res.status(404).json({ success: false, message: "User not found." });
         }
+
+        // Audit log
+        createAuditLog(userId, "PROFILE_UPDATE", req, `Updated fields: ${Object.keys(updateData).join(", ")}`);
 
         // Send system notification for profile update
         try {

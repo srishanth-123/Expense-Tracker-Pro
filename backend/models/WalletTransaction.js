@@ -17,7 +17,7 @@ const walletTransactionSchema = new mongoose.Schema({
     },
     source: {
         type: String,
-        enum: ["upi", "expense", "split", "topup", "subscription", "transfer"],
+        enum: ["upi", "expense", "split", "topup", "subscription", "transfer", "savings", "savings_withdrawal", "savings_refund"],
         required: true
     },
     sender: {

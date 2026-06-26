@@ -36,11 +36,12 @@ const validateEnv = () => {
     const aiKeyByProvider = {
         openai: 'OPENAI_API_KEY',
         anthropic: 'ANTHROPIC_API_KEY',
-        gemini: 'GEMINI_API_KEY'
+        gemini: 'GEMINI_API_KEY',
+        grok: 'GROK_API_KEY'
     };
     const expectedAiKey = aiKeyByProvider[aiProvider];
     if (!expectedAiKey) {
-        console.warn(`[WARNING] Unknown AI_PROVIDER "${aiProvider}". Expected one of: openai, anthropic, gemini. AI features will use rule-based fallback.`);
+        console.warn(`[WARNING] Unknown AI_PROVIDER "${aiProvider}". Expected one of: openai, anthropic, gemini, grok. AI features will use rule-based fallback.`);
     } else if (!process.env[expectedAiKey]) {
         console.warn(`[WARNING] ${expectedAiKey} is missing for AI_PROVIDER="${aiProvider}". AI features will use rule-based fallback.`);
     }

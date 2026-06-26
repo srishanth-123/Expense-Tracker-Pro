@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Receipt, Wallet, PieChart, Users, Target, X, Bot } from 'lucide-react';
+import { LayoutDashboard, Receipt, Wallet, PieChart, Users, Target, X, Bot, CircleDollarSign } from 'lucide-react';
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -17,6 +17,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     { name: 'Wallet Top-up', path: '/wallet', icon: <Wallet size={20} /> },
     { name: 'Split Expenses', path: '/splits', icon: <Users size={20} /> },
     { name: 'Budgets', path: '/budgets', icon: <Target size={20} /> },
+    { name: 'Savings Goals', path: '/savings', icon: <CircleDollarSign size={20} /> },
     { name: 'Analytics', path: '/analytics', icon: <PieChart size={20} /> },
     { name: 'FinPilot AI', path: '/chat', icon: <Bot size={20} /> },
   ];

@@ -2,9 +2,11 @@ const { Resend } = require('resend');
 const logger = require('../utils/logger');
 const {
   welcomeEmail,
+  emailVerificationEmail,
   passwordResetEmail,
   paymentSuccessEmail,
-  splitReminderEmail
+  splitReminderEmail,
+  securityAlertEmail
 } = require('../templates/emailTemplates');
 
 const getClient = () => {
@@ -45,6 +47,15 @@ const sendWelcomeEmail = (user) => {
   });
 };
 
+const sendVerificationEmail = (user, verifyUrl, expiresInMinutes = 60) => {
+  logger.info(`[MAILER] Verification Link for ${user.email}: ${verifyUrl}`);
+  sendEmailAsync({
+    to: user.email,
+    subject: 'Verify your ExpenseTracker email',
+    html: emailVerificationEmail({ name: user.name, verifyUrl, expiresInMinutes })
+  });
+};
+
 const sendPasswordResetEmail = (user, resetUrl, expiresInMinutes) => {
   logger.info(`[MAILER] Password Reset Link for ${user.email}: ${resetUrl}`);
   sendEmailAsync({
@@ -81,10 +92,26 @@ const sendSplitReminderEmail = (user, split) => {
   });
 };
 
+const sendSecurityAlertEmail = (user, { action, device, ip, time }) => {
+  sendEmailAsync({
+    to: user.email,
+    subject: `Security Alert: ${action}`,
+    html: securityAlertEmail({
+      name: user.name,
+      action,
+      device,
+      ip,
+      time
+    })
+  });
+};
+
 module.exports = {
   sendEmail,
   sendWelcomeEmail,
+  sendVerificationEmail,
   sendPasswordResetEmail,
   sendPaymentSuccessEmail,
-  sendSplitReminderEmail
+  sendSplitReminderEmail,
+  sendSecurityAlertEmail
 };

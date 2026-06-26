@@ -40,11 +40,13 @@ afterAll(async () => {
     // 3. Close BullMQ workers and queues
     try {
         const { insightsQueue, insightsWorker } = require("../queues/insightsQueue");
-        const { subscriptionCronQueue, subscriptionCronWorker } = require("../queues/subscriptionCron");
+        const { subscriptionCronQueue, subscriptionCronWorker, recurringCronQueue, recurringCronWorker } = require("../queues/subscriptionCron");
         if (insightsWorker) await insightsWorker.close();
         if (insightsQueue) await insightsQueue.close();
         if (subscriptionCronWorker) await subscriptionCronWorker.close();
         if (subscriptionCronQueue) await subscriptionCronQueue.close();
+        if (recurringCronWorker) await recurringCronWorker.close();
+        if (recurringCronQueue) await recurringCronQueue.close();
     } catch (err) {
         console.error("Error closing BullMQ in test:", err.message);
     }

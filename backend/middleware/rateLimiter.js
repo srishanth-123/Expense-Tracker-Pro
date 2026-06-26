@@ -92,9 +92,9 @@ class UpstashRedisStore {
 
 /**
  * Factory that builds a limiter. Uses UpstashRedisStore when Redis is
- * available, otherwise falls back to the built-in MemoryStore.
+ * available (and useRedis is true), otherwise falls back to the built-in MemoryStore.
  */
-const buildLimiter = ({ windowMs, max, prefix }) => {
+const buildLimiter = ({ windowMs, max, prefix, useRedis = true }) => {
     const options = {
         windowMs,
         max,
@@ -107,7 +107,7 @@ const buildLimiter = ({ windowMs, max, prefix }) => {
         },
     };
 
-    if (redis) {
+    if (redis && useRedis) {
         options.store = new UpstashRedisStore({ prefix, windowMs });
     }
 
@@ -119,24 +119,28 @@ const authLimiter = buildLimiter({
     windowMs: 1 * 60 * 1000, // 1 minute window
     max: 50, // 50 requests per minute
     prefix: "rl:auth:",
+    useRedis: true,
 });
 
 const paymentLimiter = buildLimiter({
     windowMs: 15 * 60 * 1000,
     max: 50,
     prefix: "rl:payment:",
+    useRedis: true,
 });
 
 const walletLimiter = buildLimiter({
     windowMs: 15 * 60 * 1000,
     max: 100,
     prefix: "rl:wallet:",
+    useRedis: true,
 });
 
 const generalLimiter = buildLimiter({
     windowMs: 1 * 60 * 1000, // 1 minute window
     max: 500, // 500 requests per minute
     prefix: "rl:general:",
+    useRedis: false, // EXCLUDE from Redis to save thousands of commands per day
 });
 
 module.exports = {

@@ -16,6 +16,7 @@ import Dashboard from './pages/Dashboard';
 // Lazy loading remaining sub-pages
 const ForgotPassword = React.lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = React.lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = React.lazy(() => import('./pages/VerifyEmail'));
 const Transactions = React.lazy(() => import('./pages/Transactions'));
 const Splits = React.lazy(() => import('./pages/Splits'));
 const Analytics = React.lazy(() => import('./pages/Analytics'));
@@ -24,6 +25,7 @@ const Wallet = React.lazy(() => import('./pages/Wallet'));
 import Notifications from './pages/Notifications';
 const ChatPage = React.lazy(() => import('./pages/chat/ChatPage'));
 import Profile from './pages/Profile';
+const SavingsGoals = React.lazy(() => import('./pages/SavingsGoals'));
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
@@ -55,6 +57,7 @@ const AppRoutes = () => {
         <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
         <Route path="/forgot-password" element={user ? <Navigate to="/" /> : <ForgotPassword />} />
         <Route path="/reset-password/:token" element={user ? <Navigate to="/" /> : <ResetPassword />} />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
 
         {/* Protected Routes inside Layout */}
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
@@ -67,6 +70,7 @@ const AppRoutes = () => {
           <Route path="notifications" element={<Notifications />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="savings" element={<SavingsGoals />} />
         </Route>
       </Routes>
     </Suspense>

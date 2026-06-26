@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useContext } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { 
   Search, Plus, ArrowUpRight, ArrowDownRight, 
-  Trash2, Edit2, RotateCcw, X, Inbox, Calendar, FolderEdit, Download
+  Trash2, Edit2, RotateCcw, X, Inbox, Calendar, FolderEdit, Download,
+  Camera, Loader, ArrowUpDown
 } from 'lucide-react';
+import { AuthContext } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import api from '../api';
 import Card from '../components/ui/Card';
@@ -69,6 +71,7 @@ const Transactions = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   
   // ── State ──
+  const { user } = useContext(AuthContext);
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +79,12 @@ const Transactions = () => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef(null);
+
+  // ── Receipt OCR State ──
+  const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
+  const [ocrImage, setOcrImage] = useState(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [parsedData, setParsedData] = useState(null);
   
   // Pagination & Filters (Initialized from URL if present)
   const [page, setPage] = useState(parseInt(searchParams.get('page')) || 1);
@@ -93,6 +102,8 @@ const Transactions = () => {
       dateRangeType: searchParams.get('dateRangeType') || 'all',
       customStartDate: searchParams.get('customStartDate') || defaultStartDate,
       customEndDate: searchParams.get('customEndDate') || defaultEndDate,
+      sortBy: searchParams.get('sortBy') || 'date',
+      sortOrder: searchParams.get('sortOrder') || 'desc',
     };
   });
 
@@ -159,6 +170,8 @@ const Transactions = () => {
       if (filters.customStartDate) params.set('customStartDate', filters.customStartDate);
       if (filters.customEndDate) params.set('customEndDate', filters.customEndDate);
     }
+    if (filters.sortBy) params.set('sortBy', filters.sortBy);
+    if (filters.sortOrder) params.set('sortOrder', filters.sortOrder);
     setSearchParams(params);
   }, [filters, page, setSearchParams]);
 
@@ -170,6 +183,8 @@ const Transactions = () => {
     const dateRangeTypeVal = searchParams.get('dateRangeType') || 'all';
     const customStartVal = searchParams.get('customStartDate') || '';
     const customEndVal = searchParams.get('customEndDate') || '';
+    const sortByVal = searchParams.get('sortBy') || 'date';
+    const sortOrderVal = searchParams.get('sortOrder') || 'desc';
     const pageVal = parseInt(searchParams.get('page')) || 1;
 
     setFilters(prev => {
@@ -178,6 +193,8 @@ const Transactions = () => {
         prev.type !== typeVal ||
         prev.category !== categoryVal ||
         prev.dateRangeType !== dateRangeTypeVal ||
+        prev.sortBy !== sortByVal ||
+        prev.sortOrder !== sortOrderVal ||
         (dateRangeTypeVal === 'custom' && prev.customStartDate !== customStartVal && customStartVal) ||
         (dateRangeTypeVal === 'custom' && prev.customEndDate !== customEndVal && customEndVal)
       ) {
@@ -188,6 +205,8 @@ const Transactions = () => {
           type: typeVal,
           category: categoryVal,
           dateRangeType: dateRangeTypeVal,
+          sortBy: sortByVal,
+          sortOrder: sortOrderVal,
           customStartDate: dateRangeTypeVal === 'custom' && customStartVal ? customStartVal : prev.customStartDate,
           customEndDate: dateRangeTypeVal === 'custom' && customEndVal ? customEndVal : prev.customEndDate,
         };
@@ -270,6 +289,8 @@ const Transactions = () => {
       if (filters.type) params.append('type', filters.type);
       if (filters.category) params.append('category', filters.category);
       if (filters.search) params.append('search', filters.search);
+      if (filters.sortBy) params.append('sortBy', filters.sortBy);
+      if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
       
       const { startDate, endDate } = getDateRange(filters.dateRangeType, filters.customStartDate, filters.customEndDate);
       if (startDate) params.append('startDate', startDate);
@@ -327,7 +348,7 @@ const Transactions = () => {
   useEffect(() => {
     fetchTransactions();
     fetchSummary();
-  }, [page, filters.type, filters.category, filters.search, filters.dateRangeType, filters.customStartDate, filters.customEndDate]);
+  }, [page, filters.type, filters.category, filters.search, filters.dateRangeType, filters.customStartDate, filters.customEndDate, filters.sortBy, filters.sortOrder]);
 
   const updateTimer = useRef(null);
   useEffect(() => {
@@ -363,7 +384,7 @@ const Transactions = () => {
     setPage(1);
   };
 
-  const openModal = (txn = null) => {
+  const openModal = (txn = null, prefillData = null) => {
     setFormError('');
     setIsAddingCategory(false);
     setNewCategoryName('');
@@ -377,6 +398,27 @@ const Transactions = () => {
         date: new Date(txn.date || txn.createdAt).toISOString().split('T')[0],
         paymentMethod: 'regular'
       });
+    } else if (prefillData) {
+      setEditingId(null);
+      // Find category ID matching parsed category name (case-insensitive)
+      const matchedCat = categories.find(c => c.name.toLowerCase() === prefillData.category?.toLowerCase());
+      setFormData({
+        type: 'expense',
+        amount: prefillData.amount || '',
+        category: matchedCat ? matchedCat._id : (categories.length > 0 ? categories[0]._id : ''),
+        description: prefillData.description || prefillData.merchantName || '',
+        date: prefillData.date || new Date().toISOString().split('T')[0],
+        paymentMethod: 'regular'
+      });
+      setBulkTransactions([
+        {
+          type: 'expense',
+          amount: prefillData.amount || '',
+          category: matchedCat ? matchedCat._id : (categories.length > 0 ? categories[0]._id : ''),
+          description: prefillData.description || prefillData.merchantName || '',
+          date: prefillData.date || new Date().toISOString().split('T')[0]
+        }
+      ]);
     } else {
       setEditingId(null);
       setFormData({
@@ -398,6 +440,39 @@ const Transactions = () => {
       ]);
     }
     setIsModalOpen(true);
+  };
+
+  const handleOcrFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Image size must be less than 2MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Data = reader.result;
+      setOcrImage(base64Data);
+      setOcrLoading(true);
+      setParsedData(null);
+
+      try {
+        const res = await api.post('/ocr/scan', { image: base64Data });
+        if (res) {
+          setParsedData(res);
+          toast.success('Receipt scanned successfully!');
+        } else {
+          toast.error('Failed to scan receipt');
+        }
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Error processing receipt');
+      } finally {
+        setOcrLoading(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleAddRow = () => {
@@ -446,7 +521,27 @@ const Transactions = () => {
       }
       window.dispatchEvent(new CustomEvent('financialDataUpdated'));
       setIsModalOpen(false);
-      fetchTransactions();
+      
+      // Reset filters and sort by recently added so the user sees the new transaction immediately
+      let filtersChanged = false;
+      setFilters(prev => {
+        if (prev.dateRangeType !== 'all' || prev.sortBy !== 'createdAt' || prev.sortOrder !== 'desc') {
+          filtersChanged = true;
+          return {
+            ...prev,
+            dateRangeType: 'all',
+            sortBy: 'createdAt',
+            sortOrder: 'desc'
+          };
+        }
+        return prev;
+      });
+
+      if (page !== 1) {
+        setPage(1);
+      } else if (!filtersChanged) {
+        fetchTransactions();
+      }
       fetchSummary();
     } catch (err) {
       setFormError(err.response?.data?.message || 'Failed to save transaction');
@@ -583,6 +678,9 @@ const Transactions = () => {
           <Button variant="secondary" onClick={handleExport} loading={exporting} icon={Download}>
             Export
           </Button>
+          <Button variant="secondary" onClick={() => setIsOcrModalOpen(true)} icon={Camera} style={{ border: '1px solid var(--primary)', color: 'var(--primary)' }}>
+            Scan Receipt <span style={{ fontSize: '0.65rem', background: 'var(--primary)', color: '#fff', padding: '1px 4px', borderRadius: '4px', marginLeft: '4px', fontWeight: 700 }}>PRO</span>
+          </Button>
           <Button onClick={() => openModal()} icon={Plus}>
             Add New
           </Button>
@@ -692,6 +790,26 @@ const Transactions = () => {
               <option key={c._id} value={c._id}>{c.name}</option>
             ))}
           </select>
+
+          {/* Sort Selector Dropdown */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '0 12px', height: '42px' }}>
+            <ArrowUpDown size={16} color="var(--text-secondary)" />
+            <select 
+              value={`${filters.sortBy}-${filters.sortOrder}`} 
+              onChange={(e) => {
+                const [sortBy, sortOrder] = e.target.value.split('-');
+                setFilters(prev => ({ ...prev, sortBy, sortOrder }));
+                setPage(1);
+              }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', height: '100%', fontSize: '0.9rem' }}
+            >
+              <option value="date-desc">Newest Transaction Date</option>
+              <option value="date-asc">Oldest Transaction Date</option>
+              <option value="createdAt-desc">Recently Added</option>
+              <option value="amount-desc">Amount: High to Low</option>
+              <option value="amount-asc">Amount: Low to High</option>
+            </select>
+          </div>
 
           {/* Date Selector Dropdown */}
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1139,6 +1257,159 @@ const Transactions = () => {
         isDanger={!confirmModal.isRestore}
         loading={deleting}
       />
+
+      {/* Receipt OCR Modal */}
+      {isOcrModalOpen && createPortal(
+        <div className="modal-overlay" onClick={() => !ocrLoading && setIsOcrModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Camera size={22} className="text-primary" />
+                AI Receipt Scanner
+              </h3>
+              {!ocrLoading && (
+                <button className="modal-close" onClick={() => setIsOcrModalOpen(false)}>
+                  <X size={20} />
+                </button>
+              )}
+            </div>
+
+            {!(user?.isPro || (user?.plan === 'PRO' && user?.subscriptionStatus === 'ACTIVE')) ? (
+              // Upgrade Prompt for Free Users
+              <div style={{ padding: '24px 0', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+                <div style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--primary)', padding: '16px', borderRadius: '50%' }}>
+                  <Camera size={48} />
+                </div>
+                <h4 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Premium Feature</h4>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '340px' }}>
+                  AI Receipt Scanning is exclusive to Pro subscribers. Upgrade now to automatically scan receipts and pre-fill expenses!
+                </p>
+                <Button onClick={() => { setIsOcrModalOpen(false); window.location.href = '/profile'; }}>
+                  Upgrade to Pro
+                </Button>
+              </div>
+            ) : (
+              // Pro Feature Workspace
+              <div style={{ padding: '16px 0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {!ocrImage && (
+                  <div 
+                    style={{
+                      border: '2px dashed var(--surface-border)',
+                      borderRadius: '12px',
+                      padding: '40px 20px',
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      transition: 'border-color 0.2s',
+                    }}
+                    onClick={() => document.getElementById('ocr-file-input').click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const file = e.dataTransfer.files[0];
+                      if (file) {
+                        const event = { target: { files: [file] } };
+                        handleOcrFileChange(event);
+                      }
+                    }}
+                  >
+                    <input 
+                      type="file" 
+                      id="ocr-file-input" 
+                      accept="image/jpeg,image/png,image/jpg" 
+                      style={{ display: 'none' }} 
+                      onChange={handleOcrFileChange} 
+                    />
+                    <Camera size={36} color="var(--text-secondary)" style={{ marginBottom: '12px' }} />
+                    <p style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '4px' }}>Click to upload or drag & drop</p>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>JPEG, PNG, JPG up to 2MB</span>
+                  </div>
+                )}
+
+                {ocrImage && (
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 150px', maxHeight: '200px', overflow: 'hidden', borderRadius: '8px', border: '1px solid var(--surface-border)', position: 'relative' }}>
+                      <img src={ocrImage} alt="Receipt preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      {ocrLoading && (
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#fff' }}>
+                          <Loader size={32} className="animate-spin text-primary" />
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Analyzing receipt...</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {parsedData && (
+                      <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ background: 'var(--input-bg)', padding: '12px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Merchant</div>
+                          <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>{parsedData.merchantName || 'Unknown'}</div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <div style={{ background: 'var(--input-bg)', padding: '12px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Amount</div>
+                            <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--success)' }}>{fmt(parsedData.amount)}</div>
+                          </div>
+                          <div style={{ background: 'var(--input-bg)', padding: '12px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Date</div>
+                            <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>{parsedData.date}</div>
+                          </div>
+                        </div>
+
+                        <div style={{ background: 'var(--input-bg)', padding: '12px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Category</div>
+                          <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--primary)' }}>{parsedData.category}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {parsedData && parsedData.items && parsedData.items.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px', textTransform: 'uppercase' }}>Line Items</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto', background: 'rgba(255,255,255,0.01)', padding: '8px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                      {parsedData.items.map((item, idx) => (
+                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                          <span style={{ color: 'var(--text-primary)' }}>{item.description}</span>
+                          <span style={{ fontWeight: 600 }}>{fmt(item.price)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                  <Button 
+                    variant="secondary" 
+                    fullWidth 
+                    onClick={() => {
+                      setOcrImage(null);
+                      setParsedData(null);
+                    }}
+                    disabled={ocrLoading}
+                  >
+                    Clear / Reset
+                  </Button>
+                  <Button 
+                    fullWidth 
+                    disabled={!parsedData || ocrLoading}
+                    onClick={() => {
+                      openModal(null, parsedData);
+                      setIsOcrModalOpen(false);
+                      setOcrImage(null);
+                      setParsedData(null);
+                    }}
+                  >
+                    Apply & Prefill Form
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

@@ -1,5 +1,14 @@
 const mongoose = require("mongoose");
 
+const sessionSchema = new mongoose.Schema({
+    token: { type: String, required: true },
+    device: { type: String, default: "Unknown" },
+    browser: { type: String, default: "Unknown" },
+    ip: { type: String, default: "Unknown" },
+    loginAt: { type: Date, default: Date.now },
+    lastActive: { type: Date, default: Date.now }
+}, { _id: true });
+
 const userSchema = new mongoose.Schema(
     {
         name: {
@@ -73,6 +82,24 @@ const userSchema = new mongoose.Schema(
         passwordResetExpires: {
             type: Date,
             default: null
+        },
+        // ─── Email Verification ───────────────────────────────────────────
+        emailVerified: {
+            type: Boolean,
+            default: false
+        },
+        emailVerificationToken: {
+            type: String,
+            default: null
+        },
+        emailVerificationExpires: {
+            type: Date,
+            default: null
+        },
+        // ─── Session Management ───────────────────────────────────────────
+        activeSessions: {
+            type: [sessionSchema],
+            default: []
         }
     },
     { timestamps: true }
@@ -102,4 +129,3 @@ userSchema.pre("save", function() {
 });
 
 module.exports = mongoose.model("User", userSchema);
-

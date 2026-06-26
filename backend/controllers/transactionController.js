@@ -7,7 +7,7 @@ const Notification = require("../models/notificationModel");
 const { sendNotificationToUser } = require("../utils/socket");
 const budgetService = require("../services/budgetService");
 const sagaService = require("../services/saga.service");
-const { markFinancialDataChanged } = require("../utils/cacheHelpers");
+const { markFinancialDataChanged, versionedCacheGet, getFinancialVersion } = require("../utils/cacheHelpers");
 
 async function wipeTransactionDependentCaches(userId) {
     // Just bump the version counter — all analytics endpoints use version-based
@@ -122,91 +122,64 @@ exports.addTransaction=async(req,res)=>{
 
 exports.getTransactions=async(req,res)=>{
     try {
+        const userId = req.user._id;
         const queryString = new URLSearchParams(req.query).toString();
-        const cacheKey = `transactions:${req.user._id}:${queryString}`;
-        
-        if (redis) {
-            try {
-                const cached = await redis.get(cacheKey);
-                if (cached) {
-                    let data;
-                    if (typeof cached === "string") {
-                        data = JSON.parse(cached);
-                    } else if (typeof cached === "object") {
-                        data = cached;
-                    } else {
-                        console.warn("Redis cache invalid type:", typeof cached);
-                        await redis.del(cacheKey);
-                    }
-                    if (data) return res.json({success: true, message: "Transactions retrieved", data: data});
-                }
-            } catch (err) {
-                console.warn("Redis GET error:", err.message);
-                try {
-                    await redis.del(cacheKey);
-                } catch (delErr) {
-                    console.warn("Failed to clear cache:", delErr.message);
-                }
-            }
-        }
+        const cacheKey = `transactions:${userId}:${queryString}`;
+        const fv = await getFinancialVersion(userId);
 
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const skip = (page - 1) * limit;
-        const {type, category, startDate, endDate, sortBy, sortOrder, search} = req.query;
-        
-        let filter = {user: req.user._id, isDeleted: false};
-        
-        if (type) filter.type = type;
-        if (category) filter.category = category;
-        if (startDate || endDate) {
-            filter.date = {};
-            if (startDate) filter.date.$gte = new Date(startDate);
-            if (endDate) filter.date.$lte = new Date(endDate);
-        }
-        
-        // Search across description and amount
-        if (search && search.trim()) {
-            const searchRegex = new RegExp(search.trim(), 'i');
-            filter.$or = [
-                { description: searchRegex },
-                { amount: isNaN(search) ? undefined : parseFloat(search) }
-            ].filter(Boolean);
-        }
-        
-        let sort = {date: -1, createdAt: -1};
-        if (sortBy) {
-            sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
-            if (sortBy !== 'createdAt') {
-                sort.createdAt = -1;
-            }
-        }
-        
-        const transactions = await Transaction.find(filter)
-            .populate("category")
-            .sort(sort)
-            .skip(skip)
-            .limit(limit);
+        const { data } = await versionedCacheGet(cacheKey, fv, async () => {
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 10;
+            const skip = (page - 1) * limit;
+            const {type, category, startDate, endDate, sortBy, sortOrder, search} = req.query;
             
-        const total = await Transaction.countDocuments(filter);
-        
-        const result = {
-            transactions,
-            page,
-            limit,
-            total,
-            pages: Math.ceil(total / limit)
-        };
-
-        if (redis) {
-            try {
-                await redis.set(cacheKey, JSON.stringify(result), { ex: 300 });
-            } catch (err) {
-                console.warn("Redis SET error:", err.message);
+            let filter = {user: userId, isDeleted: false};
+            
+            if (type) filter.type = type;
+            if (category) filter.category = category;
+            if (startDate || endDate) {
+                filter.date = {};
+                if (startDate) filter.date.$gte = new Date(startDate);
+                if (endDate) filter.date.$lte = new Date(endDate);
             }
-        }
+            
+            // Search across description and amount
+            if (search && search.trim()) {
+                const searchRegex = new RegExp(search.trim(), 'i');
+                filter.$or = [
+                    { description: searchRegex },
+                    { amount: isNaN(search) ? undefined : parseFloat(search) }
+                ].filter(Boolean);
+            }
+            
+            let sort = {};
+            if (sortBy) {
+                sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+                if (sortBy !== 'createdAt') {
+                    sort.createdAt = -1;
+                }
+            } else {
+                sort = {date: -1, createdAt: -1};
+            }
+            
+            const transactions = await Transaction.find(filter)
+                .populate("category")
+                .sort(sort)
+                .skip(skip)
+                .limit(limit);
+                
+            const total = await Transaction.countDocuments(filter);
+            
+            return {
+                transactions,
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            };
+        }, 300);
 
-        res.json({success: true, message: "Transactions retrieved", data: result});
+        res.json({success: true, message: "Transactions retrieved", data});
     } catch (error) {
         console.error('Get transactions error:', error);
         res.status(500).json({success: false, message: "Server error"});

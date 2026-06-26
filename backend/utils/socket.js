@@ -25,6 +25,10 @@ const initSocket = (server) => {
             // Socket.io adapter needs a dedicated pub/sub pair
             const pubClient = ioRedisConnection;
             const subClient = pubClient.duplicate();
+            
+            subClient.on("error", (err) => {
+                logger.error('[Socket.io subClient] Redis connection error:', err.message);
+            });
 
             io.adapter(createAdapter(pubClient, subClient));
             logger.info('[Socket.io] Redis adapter attached — multi-node broadcasting enabled');

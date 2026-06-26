@@ -346,3 +346,90 @@ exports.getFinancialHealthScore = async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
+// ─── Spending Forecast ────────────────────────────────────────────────────────
+exports.spendingForecast = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const cacheKey = `analytics:forecast:${userId}`;
+        const fv = await getFinancialVersion(userId);
+
+        const { data } = await versionedCacheGet(cacheKey, fv, async () => {
+            const now = new Date();
+            const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+            // Get monthly spending by category for last 3 months
+            const monthlySpending = await Transaction.aggregate([
+                {
+                    $match: {
+                        user: userId,
+                        type: "expense",
+                        isDeleted: false,
+                        date: { $gte: threeMonthsAgo }
+                    }
+                },
+                {
+                    $group: {
+                        _id: {
+                            month: { $month: "$date" },
+                            year: { $year: "$date" },
+                            category: "$category"
+                        },
+                        total: { $sum: "$amount" },
+                        count: { $sum: 1 }
+                    }
+                },
+                {
+                    $lookup: {
+                        from: "categories",
+                        localField: "_id.category",
+                        foreignField: "_id",
+                        as: "categoryInfo"
+                    }
+                },
+                { $unwind: { path: "$categoryInfo", preserveNullAndEmptyArrays: true } }
+            ]).read("secondaryPreferred");
+
+            // Aggregate by category and compute average
+            const categoryMap = {};
+            for (const item of monthlySpending) {
+                const catName = item.categoryInfo?.name || "Uncategorized";
+                if (!categoryMap[catName]) {
+                    categoryMap[catName] = { months: [], totalSpent: 0 };
+                }
+                categoryMap[catName].months.push(item.total);
+                categoryMap[catName].totalSpent += item.total;
+            }
+
+            const forecast = Object.entries(categoryMap).map(([category, data]) => {
+                const avg = data.totalSpent / Math.max(data.months.length, 1);
+                // Simple trend: if spending is increasing, project higher
+                const trend = data.months.length >= 2 
+                    ? (data.months[data.months.length - 1] - data.months[0]) / data.months.length
+                    : 0;
+                const projected = Math.max(0, Math.round((avg + trend) * 100) / 100);
+                return {
+                    category,
+                    averageMonthly: Math.round(avg * 100) / 100,
+                    trend: trend > 0 ? "increasing" : trend < 0 ? "decreasing" : "stable",
+                    projectedNextMonth: projected,
+                    historicalMonths: data.months.length
+                };
+            }).sort((a, b) => b.projectedNextMonth - a.projectedNextMonth);
+
+            const totalProjected = forecast.reduce((sum, f) => sum + f.projectedNextMonth, 0);
+
+            return {
+                forecast,
+                totalProjectedExpense: Math.round(totalProjected * 100) / 100,
+                basedOnMonths: 3,
+                generatedAt: new Date().toISOString()
+            };
+        });
+
+        res.json({ success: true, message: "Success", data });
+    } catch (error) {
+        console.error("Spending forecast error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};

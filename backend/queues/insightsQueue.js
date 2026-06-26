@@ -80,6 +80,7 @@ if (ioRedisConnection) {
         {
             connection: ioRedisConnection,
             concurrency: 3,          // Process up to 3 jobs at a time
+            drainDelay: 15,          // Wait 15 seconds when empty before polling Redis again
             limiter: {
                 max: 10,              // Max 10 jobs per minute (Gemini rate limits)
                 duration: 60000,
@@ -94,6 +95,16 @@ if (ioRedisConnection) {
     insightsWorker.on("failed", (job, err) => {
         logger.error(`[BullMQ] Job ${job?.id} failed:`, err.message);
     });
+
+    insightsWorker.on("error", (err) => {
+        logger.error("[BullMQ insightsWorker] Connection error:", err.message);
+    });
+
+    if (insightsQueue) {
+        insightsQueue.on("error", (err) => {
+            logger.error("[BullMQ insightsQueue] Connection error:", err.message);
+        });
+    }
 
     logger.info("[BullMQ] AI insights queue and worker initialized");
 }

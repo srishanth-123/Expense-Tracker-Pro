@@ -3,7 +3,7 @@ const { LRUCache } = require('lru-cache');
 // Construct the L1 runtime cache securely locking 100 most active user queries
 const searchCache = new LRUCache({
     max: 100, 
-    ttl: 1000 * 60 * 5, // 5 minutes Time-to-Live
+    ttl: 1000 * 60 * 60, // 1 hour Time-to-Live
 });
 
 /**

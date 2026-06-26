@@ -6,6 +6,8 @@ const { sendNotificationToUser } = require("../utils/socket");
 
 let subscriptionCronQueue = null;
 let subscriptionCronWorker = null;
+let recurringCronQueue = null;
+let recurringCronWorker = null;
 
 if (ioRedisConnection) {
     const { Queue, Worker } = require("bullmq");
@@ -81,12 +83,58 @@ if (ioRedisConnection) {
         logger.info(`[BullMQ] Daily subscription check complete. Sent ${notificationsSent} alerts.`);
         return { success: true, notificationsSent };
     }, {
-        connection: ioRedisConnection
+        connection: ioRedisConnection,
+        drainDelay: 120          // Wait 2 minutes when empty before polling Redis again
     });
 
     subscriptionCronWorker.on("failed", (job, err) => {
         logger.error(`[BullMQ] Subscription Cron failed:`, err.message);
     });
+
+    subscriptionCronWorker.on("error", (err) => {
+        logger.error("[BullMQ subscriptionCronWorker] Connection error:", err.message);
+    });
+
+    if (subscriptionCronQueue) {
+        subscriptionCronQueue.on("error", (err) => {
+            logger.error("[BullMQ subscriptionCronQueue] Connection error:", err.message);
+        });
+    }
+
+    // ─── Recurring Transaction Processing (hourly) ────────────────────────
+    recurringCronQueue = new Queue("recurring-cron", {
+        connection: ioRedisConnection,
+        defaultJobOptions: {
+            attempts: 2,
+            backoff: { type: "exponential", delay: 5000 },
+            removeOnComplete: true,
+            removeOnFail: false
+        }
+    });
+
+    recurringCronQueue.add("hourly-recurring-check", {}, {
+        repeat: { pattern: "0 * * * *" }, // Every hour
+        jobId: "hourly-recurring-check-job"
+    });
+
+    recurringCronWorker = new Worker("recurring-cron", async (job) => {
+        logger.info("[BullMQ] Running hourly recurring transaction processing...");
+        const { processDueRecurring } = require("../controllers/recurringController");
+        const result = await processDueRecurring();
+        logger.info(`[BullMQ] Recurring transaction processing complete: ${result.processed}/${result.total} processed.`);
+        return result;
+    }, {
+        connection: ioRedisConnection,
+        drainDelay: 120
+    });
+
+    recurringCronWorker.on("failed", (job, err) => {
+        logger.error("[BullMQ] Recurring Cron failed:", err.message);
+    });
+
+    recurringCronWorker.on("error", (err) => {
+        logger.error("[BullMQ recurringCronWorker] Connection error:", err.message);
+    });
 }
 
-module.exports = { subscriptionCronQueue, subscriptionCronWorker };
+module.exports = { subscriptionCronQueue, subscriptionCronWorker, recurringCronQueue, recurringCronWorker };

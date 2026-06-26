@@ -50,6 +50,18 @@ const welcomeEmail = ({ name }) => baseTemplate({
   `
 });
 
+const emailVerificationEmail = ({ name, verifyUrl, expiresInMinutes }) => baseTemplate({
+  title: 'Verify your email address',
+  previewText: 'Please verify your email to activate your ExpenseTracker account.',
+  body: `
+    <p style="font-size:16px;line-height:1.7;margin:0 0 16px;">Hi ${name || 'there'},</p>
+    <p style="font-size:16px;line-height:1.7;margin:0 0 16px;">Thanks for signing up! Please verify your email address to unlock all features. This link expires in ${expiresInMinutes} minutes.</p>
+    ${button(verifyUrl, 'Verify Email')}
+    <p style="font-size:14px;line-height:1.7;color:#64748b;margin:8px 0 0;">If the button does not work, copy and paste this link into your browser:</p>
+    <p style="font-size:13px;line-height:1.6;word-break:break-all;color:#475569;margin:8px 0 0;">${verifyUrl}</p>
+  `
+});
+
 const passwordResetEmail = ({ name, resetUrl, expiresInMinutes }) => baseTemplate({
   title: 'Reset your password',
   previewText: 'Use this secure link to reset your ExpenseTracker password.',
@@ -87,9 +99,27 @@ const splitReminderEmail = ({ name, description, amount, paidBy }) => baseTempla
   `
 });
 
+const securityAlertEmail = ({ name, action, device, ip, time }) => baseTemplate({
+  title: 'Security Alert',
+  previewText: `New ${action} detected on your ExpenseTracker account.`,
+  body: `
+    <p style="font-size:16px;line-height:1.7;margin:0 0 16px;">Hi ${name || 'there'},</p>
+    <p style="font-size:16px;line-height:1.7;margin:0 0 16px;">We detected a new <strong>${action}</strong> on your account.</p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#f8fafc;border-radius:14px;overflow:hidden;">
+      <tr><td style="padding:14px 16px;color:#64748b;">Action</td><td style="padding:14px 16px;text-align:right;font-weight:700;">${action}</td></tr>
+      <tr><td style="padding:14px 16px;color:#64748b;border-top:1px solid #e2e8f0;">Device</td><td style="padding:14px 16px;text-align:right;border-top:1px solid #e2e8f0;">${device || 'Unknown'}</td></tr>
+      <tr><td style="padding:14px 16px;color:#64748b;border-top:1px solid #e2e8f0;">IP Address</td><td style="padding:14px 16px;text-align:right;border-top:1px solid #e2e8f0;">${ip || 'Unknown'}</td></tr>
+      <tr><td style="padding:14px 16px;color:#64748b;border-top:1px solid #e2e8f0;">Time</td><td style="padding:14px 16px;text-align:right;border-top:1px solid #e2e8f0;">${time || new Date().toISOString()}</td></tr>
+    </table>
+    <p style="font-size:14px;line-height:1.7;color:#64748b;margin:16px 0 0;">If this was not you, please reset your password immediately.</p>
+  `
+});
+
 module.exports = {
   welcomeEmail,
+  emailVerificationEmail,
   passwordResetEmail,
   paymentSuccessEmail,
-  splitReminderEmail
+  splitReminderEmail,
+  securityAlertEmail
 };

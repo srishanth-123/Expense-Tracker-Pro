@@ -46,6 +46,7 @@ const Analytics = () => {
   const [incomeExpenseTrend, setIncomeExpenseTrend] = useState([]);
   const [categoryBreakdown, setCategoryBreakdown] = useState([]);
   const [healthScore, setHealthScore] = useState(null);
+  const [forecast, setForecast] = useState(null);
 
   const currentDate = new Date();
   const [breakdownMonth, setBreakdownMonth] = useState(currentDate.getMonth() + 1);
@@ -65,7 +66,8 @@ const Analytics = () => {
         predRes,
         incExpRes,
         catBreakdownRes,
-        healthScoreRes
+        healthScoreRes,
+        forecastRes
       ] = await Promise.all([
         api.get('/analytics/top-expenses').catch(() => ({ data: [] })),
         api.get('/analytics/category-trend').catch(() => ({ data: { labels: [], datasets: [] } })),
@@ -74,7 +76,8 @@ const Analytics = () => {
         api.get('/analytics/prediction').catch(() => ({ data: null })),
         api.get('/analytics/income-expense-trend').catch(() => ({ data: [] })),
         api.get(`/analytics/category?month=${monthRef.current}&year=${yearRef.current}`).catch(() => ({ data: [] })),
-        api.get('/analytics/financial-health').catch(() => ({ data: null }))
+        api.get('/analytics/financial-health').catch(() => ({ data: null })),
+        api.get('/analytics/forecast').catch(() => ({ data: null }))
       ]);
 
       setTopExpenses(topRes?.data || topRes || []);
@@ -89,6 +92,7 @@ const Analytics = () => {
           ? healthScoreRes 
           : (healthScoreRes?.data?.score !== undefined ? healthScoreRes.data : null)
       );
+      setForecast(forecastRes?.data || forecastRes || null);
     } catch (error) {
       console.error("Failed to load analytics data:", error);
     } finally {
@@ -316,6 +320,46 @@ const Analytics = () => {
                   </div>
                 </div>
               </div>
+            </Card>
+
+            {/* Category Spending Forecast Card */}
+            <Card style={{ display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', overflow: 'hidden' }}>
+              {user?.plan !== 'PRO' && !user?.isPro && <ProOverlay />}
+              <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '100px', height: '100px', background: 'var(--primary)', opacity: 0.15, filter: 'blur(30px)', borderRadius: '50%' }}></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <TrendingUp size={20} color="var(--primary)" />
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-secondary)' }}>Category Forecast (Next Month)</h3>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '160px', overflowY: 'auto', paddingRight: '4px' }}>
+                {forecast?.forecast && forecast.forecast.length > 0 ? (
+                  forecast.forecast.slice(0, 3).map((f, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.88rem' }}>
+                      <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{f.category}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>₹{f.projectedNextMonth.toLocaleString()}</span>
+                        <span style={{ 
+                          fontSize: '0.72rem', 
+                          fontWeight: 700, 
+                          color: f.trend === 'increasing' ? 'var(--danger)' : f.trend === 'decreasing' ? 'var(--success)' : 'var(--text-secondary)',
+                          background: f.trend === 'increasing' ? 'rgba(239, 68, 68, 0.08)' : f.trend === 'decreasing' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255,255,255,0.05)',
+                          padding: '1px 6px',
+                          borderRadius: '4px'
+                        }}>
+                          {f.trend}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>Not enough data yet to forecast.</p>
+                )}
+              </div>
+              {forecast?.totalProjectedExpense !== undefined && (
+                <div style={{ borderTop: '1px solid var(--surface-border)', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Projected:</span>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary)' }}>₹{forecast.totalProjectedExpense.toLocaleString()}</span>
+                </div>
+              )}
             </Card>
           </div>
 

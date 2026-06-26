@@ -14,3 +14,4 @@ debug_trie.js
 test_razorpay.js
 generate_isolated_collection.js
 update_postman.js
+.env.*
