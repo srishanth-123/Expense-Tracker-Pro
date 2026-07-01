@@ -1,7 +1,7 @@
 # ─── Stage 1: Base ────────────────────────────────────────────────────────────
 FROM node:20-alpine AS base
 WORKDIR /app
-COPY package*.json ./
+COPY backend/package*.json ./
 
 # ─── Stage 2: Development Dependencies ────────────────────────────────────────
 FROM base AS dev-deps
@@ -14,7 +14,7 @@ RUN npm ci --only=production
 # ─── Stage 4: Development ─────────────────────────────────────────────────────
 FROM base AS development
 COPY --from=dev-deps /app/node_modules ./node_modules
-COPY . .
+COPY backend/ .
 ENV NODE_ENV=development
 EXPOSE 5000
 CMD ["npm", "run", "dev"]
