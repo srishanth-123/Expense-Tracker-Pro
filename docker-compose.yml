@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   # ─── Backend API ──────────────────────────────────────────────────────────
   backend:
@@ -18,6 +16,11 @@ services:
       - backend-logs:/app/logs
     networks:
       - app-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
       interval: 30s
@@ -33,12 +36,17 @@ services:
     container_name: expense-tracker-ui
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:8080"
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - app-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   backend-logs:

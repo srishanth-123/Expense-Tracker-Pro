@@ -2,6 +2,7 @@ const redis = require("../../config/redis");
 const logger = require("../logger");
 
 const STATE_TTL = 600; // 10 minutes
+const localMemoryStore = new Map();
 
 /**
  * Get active Redis key for user session.
@@ -14,7 +15,16 @@ function getRedisKey(userId, conversationId) {
  * Retrieve session state from Redis.
  */
 async function getState(userId, conversationId) {
-    if (!redis) return null;
+    if (!redis) {
+        const key = getRedisKey(userId, conversationId);
+        const data = localMemoryStore.get(key);
+        if (!data) return null;
+        if (new Date(data.expiresAt) < new Date()) {
+            localMemoryStore.delete(key);
+            return null;
+        }
+        return data.state;
+    }
     try {
         const key = getRedisKey(userId, conversationId);
         const raw = await redis.get(key);
@@ -36,7 +46,12 @@ async function getState(userId, conversationId) {
  * Write session state to Redis.
  */
 async function setState(userId, conversationId, state) {
-    if (!redis) return;
+    if (!redis) {
+        const key = getRedisKey(userId, conversationId);
+        const expiresAt = new Date(Date.now() + STATE_TTL * 1000).toISOString();
+        localMemoryStore.set(key, { state, expiresAt });
+        return;
+    }
     try {
         const key = getRedisKey(userId, conversationId);
         const stateWithTimestamp = {
@@ -53,7 +68,11 @@ async function setState(userId, conversationId, state) {
  * Delete session state from Redis.
  */
 async function clearState(userId, conversationId) {
-    if (!redis) return;
+    if (!redis) {
+        const key = getRedisKey(userId, conversationId);
+        localMemoryStore.delete(key);
+        return;
+    }
     try {
         const key = getRedisKey(userId, conversationId);
         await redis.del(key);

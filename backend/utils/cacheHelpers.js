@@ -129,11 +129,77 @@ const wipeUserAnalyticsCache = async (userId) => {
     }
 };
 
+const getNotificationVersion = async (userId) => {
+    if (!redis) return 1;
+    try {
+        const nv = await redis.get(`notif-version:${userId}`);
+        return nv ? parseInt(nv, 10) : 1;
+    } catch (err) {
+        logger.warn(`[Cache] Error reading notification version for ${userId}: ${err.message}`);
+        return 1;
+    }
+};
+
+const markNotificationChanged = async (userId) => {
+    if (!redis) return;
+    try {
+        await redis.incr(`notif-version:${userId}`);
+    } catch (err) {
+        logger.warn(`[Cache] Error incrementing notification version for ${userId}: ${err.message}`);
+    }
+};
+
+const getSearchVersion = async (userId) => {
+    if (!redis) return 1;
+    try {
+        const sv = await redis.get(`search-version:${userId}`);
+        return sv ? parseInt(sv, 10) : 1;
+    } catch (err) {
+        logger.warn(`[Cache] Error reading search version for ${userId}: ${err.message}`);
+        return 1;
+    }
+};
+
+const markSearchChanged = async (userId) => {
+    if (!redis) return;
+    try {
+        await redis.incr(`search-version:${userId}`);
+    } catch (err) {
+        logger.warn(`[Cache] Error incrementing search version for ${userId}: ${err.message}`);
+    }
+};
+
+const getBudgetVersion = async (userId) => {
+    if (!redis) return 1;
+    try {
+        const bv = await redis.get(`budget-version:${userId}`);
+        return bv ? parseInt(bv, 10) : 1;
+    } catch (err) {
+        logger.warn(`[Cache] Error reading budget version for ${userId}: ${err.message}`);
+        return 1;
+    }
+};
+
+const markBudgetChanged = async (userId) => {
+    if (!redis) return;
+    try {
+        await redis.incr(`budget-version:${userId}`);
+    } catch (err) {
+        logger.warn(`[Cache] Error incrementing budget version for ${userId}: ${err.message}`);
+    }
+};
+
 module.exports = {
     markFinancialDataChanged,
     getFinancialVersion,
     versionedCacheGet,
     wipeUserAnalyticsCache,
+    getNotificationVersion,
+    markNotificationChanged,
+    getSearchVersion,
+    markSearchChanged,
+    getBudgetVersion,
+    markBudgetChanged,
     CACHE_TTL,
     AI_INSIGHTS_TTL,
 };

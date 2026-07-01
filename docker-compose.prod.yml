@@ -1,0 +1,8 @@
+services:
+  backend:
+    environment:
+      - NODE_ENV=production
+    restart: always
+
+  frontend:
+    restart: always

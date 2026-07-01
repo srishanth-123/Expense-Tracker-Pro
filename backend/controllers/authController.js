@@ -6,6 +6,7 @@ const logger = require("../utils/logger");
 const redis = require("../config/redis");
 const { sendWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail, sendSecurityAlertEmail } = require("../services/emailService");
 const { createAuditLog, parseUserAgent } = require("../utils/auditLog");
+const { markFinancialDataChanged, markBudgetChanged } = require("../utils/cacheHelpers");
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -85,11 +86,9 @@ exports.registerUser = async (req, res) => {
 
                     if (redis) {
                         try {
-                            const analyticsKeys = await redis.keys(`analytics:*:${split.paidBy}*`);
-                            const transactionKeys = await redis.keys(`transactions:${split.paidBy}:*`);
-                            const budgetKeys = await redis.keys(`checkBudgets:${split.paidBy}:*`);
-                            const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys];
-                            if (allKeys.length > 0) await redis.del(...allKeys);
+                            await markFinancialDataChanged(split.paidBy);
+                            await redis.del(`transactions:${split.paidBy}:list`);
+                            await markBudgetChanged(split.paidBy);
                         } catch (_) {}
                     }
                 }
@@ -97,11 +96,9 @@ exports.registerUser = async (req, res) => {
 
             if (redis) {
                 try {
-                    const analyticsKeys = await redis.keys(`analytics:*:${user._id}*`);
-                    const transactionKeys = await redis.keys(`transactions:${user._id}:*`);
-                    const budgetKeys = await redis.keys(`checkBudgets:${user._id}:*`);
-                    const allKeys = [...analyticsKeys, ...transactionKeys, ...budgetKeys];
-                    if (allKeys.length > 0) await redis.del(...allKeys);
+                    await markFinancialDataChanged(user._id);
+                    await redis.del(`transactions:${user._id}:list`);
+                    await markBudgetChanged(user._id);
                 } catch (_) {}
             }
         } catch (linkErr) {

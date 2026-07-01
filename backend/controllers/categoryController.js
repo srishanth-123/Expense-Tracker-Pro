@@ -2,7 +2,7 @@ const Category=require("../models/category");
 const redis = require("../config/redis");
 const { invalidateUserSearchCache } = require("../utils/lruCache");
 const { normalizeCategoryName } = require("../utils/categoryNormalizer");
-const { markFinancialDataChanged } = require("../utils/cacheHelpers");
+const { markFinancialDataChanged, markSearchChanged } = require("../utils/cacheHelpers");
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -35,8 +35,7 @@ exports.createCategory=async(req,res)=>{
                 if (redis) {
                     try {
                         await redis.del(`categories:${req.user._id}`);
-                        const searchKeys = await redis.keys(`search:${req.user._id}:*`);
-                        if (searchKeys.length > 0) await redis.del(...searchKeys);
+                        await markSearchChanged(req.user._id);
                     } catch (err) {
                         console.warn("Redis invalidation error:", err.message);
                     }
@@ -58,8 +57,7 @@ exports.createCategory=async(req,res)=>{
         if (redis) {
             try {
                 await redis.del(`categories:${req.user._id}`);
-                const searchKeys = await redis.keys(`search:${req.user._id}:*`);
-                if (searchKeys.length > 0) await redis.del(...searchKeys);
+                await markSearchChanged(req.user._id);
             } catch (err) {
                 console.warn("Redis invalidation error:", err.message);
             }
@@ -136,8 +134,7 @@ exports.deleteCategory = async (req, res) => {
     if (redis) {
         try {
             await redis.del(`categories:${req.user.id}`);
-            const searchKeys = await redis.keys(`search:${req.user.id}:*`);
-            if (searchKeys.length > 0) await redis.del(...searchKeys);
+            await markSearchChanged(req.user.id);
         } catch (err) {
             console.warn("Redis invalidation error:", err.message);
         }
@@ -174,8 +171,7 @@ exports.restoreCategory = async (req, res) => {
     if (redis) {
         try {
             await redis.del(`categories:${req.user.id}`);
-            const searchKeys = await redis.keys(`search:${req.user.id}:*`);
-            if (searchKeys.length > 0) await redis.del(...searchKeys);
+            await markSearchChanged(req.user.id);
         } catch (err) {
             console.warn("Redis invalidation error:", err.message);
         }
@@ -223,8 +219,7 @@ exports.updateCategory = async (req, res) => {
     if (redis) {
       try {
         await redis.del(`categories:${req.user._id}`);
-        const searchKeys = await redis.keys(`search:${req.user._id}:*`);
-        if (searchKeys.length > 0) await redis.del(...searchKeys);
+        await markSearchChanged(req.user._id);
       } catch (err) {
         console.warn("Redis invalidation error:", err.message);
       }

@@ -51,7 +51,7 @@ const Profile = () => {
     try {
       const data = await api.get('/auth/sessions');
       setSessions(data || []);
-    } catch (err) { toast.error('Failed to load sessions'); }
+    } catch { toast.error('Failed to load sessions'); }
     finally { setLoadingSessions(false); }
   };
 
@@ -60,7 +60,7 @@ const Profile = () => {
     try {
       const data = await api.get('/auth/audit-logs?limit=20');
       setAuditLogs(data?.logs || []);
-    } catch (err) { toast.error('Failed to load audit logs'); }
+    } catch { toast.error('Failed to load audit logs'); }
     finally { setLoadingAuditLogs(false); }
   };
 
@@ -92,7 +92,7 @@ const Profile = () => {
       await api.delete(`/auth/sessions/${sessionId}`);
       toast.success('Session revoked');
       fetchSessions();
-    } catch (err) { toast.error('Failed to revoke session'); }
+    } catch { toast.error('Failed to revoke session'); }
   };
 
   const handleLogoutAll = async () => {
@@ -102,7 +102,7 @@ const Profile = () => {
       toast.success('Logged out from all devices');
       localStorage.removeItem('token');
       window.location.href = '/login';
-    } catch (err) { toast.error('Failed to logout all devices'); }
+    } catch { toast.error('Failed to logout all devices'); }
   };
 
   const handleSubscribe = async () => {

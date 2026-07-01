@@ -6,7 +6,9 @@ dotenv.config();
 
 let redis = null;
 
-if (process.env.REDIS_URL && process.env.REDIS_TOKEN) {
+if (process.env.DISABLE_REDIS_CACHE === "true") {
+    logger.info("Upstash Redis is disabled by environment configuration (DISABLE_REDIS_CACHE=true).");
+} else if (process.env.REDIS_URL && process.env.REDIS_TOKEN) {
     try {
         redis = new Redis({
             url: process.env.REDIS_URL,

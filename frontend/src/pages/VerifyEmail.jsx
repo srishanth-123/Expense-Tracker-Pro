@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { CheckCircle, XCircle, Wallet, Loader } from 'lucide-react';
 import api from '../api';
 
+const verifiedTokens = new Set();
+
 const VerifyEmail = () => {
   const { token } = useParams();
   const [status, setStatus] = useState('loading'); // loading, success, error
@@ -10,11 +12,18 @@ const VerifyEmail = () => {
 
   useEffect(() => {
     const verify = async () => {
+      if (verifiedTokens.has(token)) {
+        setStatus('success');
+        setMessage('Email verified successfully!');
+        return;
+      }
+      verifiedTokens.add(token);
       try {
         const response = await api.get(`/auth/verify-email/${token}`);
         setStatus('success');
         setMessage(response.message || 'Email verified successfully!');
       } catch (error) {
+        verifiedTokens.delete(token);
         setStatus('error');
         setMessage(error.response?.data?.message || error.message || 'Verification failed');
       }

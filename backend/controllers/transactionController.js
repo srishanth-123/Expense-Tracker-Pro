@@ -396,9 +396,13 @@ exports.bulkAddTransactions = async (req, res) => {
         const createdTransactions = [];
         const uniqueCategoryMonths = new Map();
 
-        for (const txn of transactions) {
+        for (let i = 0; i < transactions.length; i++) {
+            const txn = transactions[i];
             const parsedAmount = parseFloat(txn.amount);
-            const dateVal = txn.date ? new Date(txn.date) : new Date();
+            // Subtract i milliseconds from the date to ensure deterministic descending sort order
+            const baseDate = txn.date ? new Date(txn.date) : new Date();
+            const dateVal = new Date(baseDate.getTime() - i);
+            
             const created = await Transaction.create({
                 amount: parsedAmount,
                 type: txn.type,

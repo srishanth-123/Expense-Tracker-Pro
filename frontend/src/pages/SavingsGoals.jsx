@@ -21,7 +21,7 @@ const SavingsGoals = () => {
     try {
       const data = await api.get('/savings-goals');
       setGoals(data || []);
-    } catch (err) {
+    } catch {
       toast.error('Failed to load savings goals');
     } finally {
       setLoading(false);

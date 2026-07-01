@@ -1,0 +1,69 @@
+name: Playwright E2E Tests
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+jobs:
+  test:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+      redis:
+        image: redis:7.0
+        ports:
+          - 6379:6379
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        npm install
+        cd backend && npm install
+        cd ../frontend && npm install
+
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: Start Backend
+      env:
+        MONGO_URI: mongodb://localhost:27017/expense-tracker-test
+        REDIS_URL: redis://localhost:6379
+        DISABLE_REDIS_CACHE: "true"
+        JWT_SECRET: test_jwt_secret_key
+        EMAIL_FROM: noreply@example.com
+        RAZORPAY_KEY_ID: rzp_test_id
+        RAZORPAY_KEY_SECRET: LpoSbYnkCbnqtRKM2OT190IH
+        NODE_ENV: development
+      run: |
+        cd backend
+        npm run dev &
+        echo "Backend started in background."
+
+    - name: Start Frontend
+      run: |
+        cd frontend
+        npm run dev &
+        echo "Frontend started in background."
+
+    - name: Wait for services to be ready
+      run: |
+        npx wait-on http://localhost:5173 --timeout 60000
+
+    - name: Run Playwright tests
+      run: npx playwright test
+
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 30

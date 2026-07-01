@@ -2,6 +2,7 @@ const Category = require("../models/category");
 const Transaction = require("../models/Transaction");
 const redis = require("../config/redis");
 const { searchCache } = require("../utils/lruCache");
+const { getSearchVersion } = require("../utils/cacheHelpers");
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -13,7 +14,8 @@ exports.search = async (req, res) => {
         }
 
         const cleanQuery = query.trim();
-        const cacheKey = `search:${req.user._id}:${cleanQuery}`;
+        const sv = await getSearchVersion(req.user._id);
+        const cacheKey = `search:${req.user._id}:v${sv}:${cleanQuery}`;
 
         // L1: Check in-memory LRU cache first (Ultra fast, synchronous)
         if (searchCache.has(cacheKey)) {
@@ -34,7 +36,11 @@ exports.search = async (req, res) => {
                         console.warn("Redis cache invalid type:", typeof cached);
                         await redis.del(cacheKey);
                     }
-                    if (data) return res.json({success: true, message: "Success", data: data});
+                    if (data) {
+                        // Populate L1 LRU cache for next hit
+                        searchCache.set(cacheKey, data);
+                        return res.json({success: true, message: "Success", data: data});
+                    }
                 }
             } catch (err) {
                 console.warn("Redis GET error:", err.message);

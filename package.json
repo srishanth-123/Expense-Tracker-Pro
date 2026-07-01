@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/srishanth-123/Expense-Tracker-Pro/issues"
   },
-  "homepage": "https://github.com/srishanth-123/Expense-Tracker-Pro#readme"
+  "homepage": "https://github.com/srishanth-123/Expense-Tracker-Pro#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
 }

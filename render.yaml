@@ -1,0 +1,44 @@
+services:
+  # Backend Web Service
+  - type: web
+    name: expense-tracker-api
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_TOKEN
+        sync: false
+      - key: REDIS_IOREDIS_URL
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: COOKIE_SECRET
+        generateValue: true
+
+  # Frontend Static Site
+  - type: web
+    name: expense-tracker-ui
+    env: static
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    publishDir: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false

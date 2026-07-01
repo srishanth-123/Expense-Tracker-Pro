@@ -1,5 +1,10 @@
 # Expense Tracker Pro — Ultimate Personal Finance Platform
 
+![Build Status](https://github.com/GuthaSrishanthReddy/Expense-Tracker/workflows/Build%20CI/badge.svg)
+![Test Status](https://github.com/GuthaSrishanthReddy/Expense-Tracker/workflows/Test%20CI/badge.svg)
+![Docker Status](https://github.com/GuthaSrishanthReddy/Expense-Tracker/workflows/Docker%20Validation%20CI/badge.svg)
+![Lint Status](https://github.com/GuthaSrishanthReddy/Expense-Tracker/workflows/Lint%20CI/badge.svg)
+
 Expense Tracker Pro is a real-time, AI-driven personal finance platform that combines conversational transaction logging, threshold-based budgeting, peer-to-peer bill splitting, and an integrated digital wallet.
 
 Built with a modern full-stack architecture using **React, Vite, Tailwind CSS, Express, MongoDB Atlas, and Upstash Redis**, it delivers sub-5ms search speeds, robust transactional integrity, and intelligent financial summaries.

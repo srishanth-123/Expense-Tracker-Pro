@@ -54,45 +54,23 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ user: 1, createdAt: -1 });
 notificationSchema.index({ user: 1, read: 1 });
 
-const redis = require("../config/redis");
+const { markNotificationChanged } = require("../utils/cacheHelpers");
 
 // Automatically invalidate Redis cache when notifications are created or modified
 notificationSchema.post("save", async function(doc) {
-    if (redis) {
-        try {
-            const keys = await redis.keys(`notifications:${doc.user}:*`);
-            if (keys.length > 0) {
-                await redis.del(...keys);
-            }
-        } catch (err) {
-            console.error("Failed to clear notification cache on save:", err.message);
-        }
-    }
+    await markNotificationChanged(doc.user);
 });
 
 notificationSchema.post("findOneAndUpdate", async function(doc) {
-    if (doc && redis) {
-        try {
-            const keys = await redis.keys(`notifications:${doc.user}:*`);
-            if (keys.length > 0) {
-                await redis.del(...keys);
-            }
-        } catch (err) {
-            console.error("Failed to clear notification cache on findOneAndUpdate:", err.message);
-        }
+    if (doc) {
+        await markNotificationChanged(doc.user);
     }
 });
 
 notificationSchema.post("updateMany", async function() {
-    if (redis) {
-        try {
-            const keys = await redis.keys("notifications:*");
-            if (keys.length > 0) {
-                await redis.del(...keys);
-            }
-        } catch (err) {
-            console.error("Failed to clear notification cache on updateMany:", err.message);
-        }
+    const filter = this.getFilter ? this.getFilter() : {};
+    if (filter && filter.user) {
+        await markNotificationChanged(filter.user);
     }
 });
 

@@ -1,0 +1,56 @@
+name: Docker Validation CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - antigravity
+  pull_request:
+    branches:
+      - main
+      - master
+      - antigravity
+
+jobs:
+  validate-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Create dummy env files to prevent compose config failures
+        run: |
+          touch backend/.env
+          echo "MONGO_URI=mongodb://localhost:27017/dummy" >> backend/.env
+          echo "JWT_SECRET=dummysecret" >> backend/.env
+          echo "RAZORPAY_KEY_ID=dummy" >> backend/.env
+          echo "RAZORPAY_KEY_SECRET=dummy" >> backend/.env
+          echo "REDIS_URL=https://dummy" >> backend/.env
+          echo "REDIS_TOKEN=dummy" >> backend/.env
+
+      - name: Validate Docker Compose Config
+        run: docker compose config
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Image (Dry Run)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: expense-tracker-api:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Image (Dry Run)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: expense-tracker-ui:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

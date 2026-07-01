@@ -754,7 +754,6 @@ function generateFollowUpQuestion(missingFields, intent) {
         newLimit: "What is the new budget limit you'd like to set?",
         newDescription: "What is the new description?",
         newCategoryName: "What is the new category name?",
-        categoryNewName: "What is the new category name?",
         receiverName: "Who is the other person?"
     };
     return questions[field] || `Could you provide the ${field}?`;

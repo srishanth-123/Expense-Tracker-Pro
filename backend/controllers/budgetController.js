@@ -5,6 +5,7 @@ const Transaction=require("../models/Transaction");
 const redis = require("../config/redis");
 const budgetService = require("../services/budgetService");
 const logger = require("../utils/logger");
+const { getBudgetVersion, markBudgetChanged, versionedCacheGet } = require("../utils/cacheHelpers");
 
 // Accept either `limit` or `amount` (alias) from the client.
 const readAmount = (body) => {
@@ -309,88 +310,61 @@ exports.checkBudget=async(req,res)=>{
         return res.status(400).json({success: false, message: "Valid month and year query parameters are required"});
     }
 
-    const cacheKey = `checkBudgets:${req.user._id}:${month}-${year}`;
+    const userId = req.user._id;
+    const bv = await getBudgetVersion(userId);
+    const cacheKey = `checkBudgets:${userId}:v${bv}:${month}-${year}`;
 
     try {
-        if (redis) {
-            try {
-                const cached = await redis.get(cacheKey);
-                if (cached) {
-                    let data;
-                    if (typeof cached === "string") {
-                        data = JSON.parse(cached);
-                    } else if (typeof cached === "object") {
-                        data = cached;
-                    } else {
-                        console.warn("Redis cache invalid type:", typeof cached);
-                        await redis.del(cacheKey);
+        const { data } = await versionedCacheGet(cacheKey, bv, async () => {
+            const budgets=await Budget.find({
+                user:userId,
+                month,
+                year,
+                isDeleted: false
+            });
+
+            const spentData = await Transaction.aggregate([
+                {
+                    $match: {
+                        user: userId,
+                        type: "expense",
+                        date: {
+                            $gte: new Date(Date.UTC(year, month - 1, 1)),
+                            $lte: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+                        },
+                        isDeleted: false
                     }
-                    if (data) return res.json({success: true, message: "Success", data: data});
+                },
+                {
+                    $group: {
+                        _id: "$category",
+                        total: { $sum: "$amount" }
+                    }
                 }
-            } catch (err) {
-                console.warn("Redis GET error:", err.message);
-                try {
-                    await redis.del(cacheKey);
-                } catch (delErr) {
-                    console.warn("Failed to clear cache:", delErr.message);
+            ]);
+
+            const spentMap = new Map();
+            spentData.forEach(item => {
+                if (item._id) {
+                    spentMap.set(item._id.toString(), item.total);
                 }
-            }
-        }
+            });
 
-        const budgets=await Budget.find({
-            user:req.user._id,
-            month,
-            year,
-            isDeleted: false
-        });
+            const results = budgets.map(budget => {
+                const categoryIdStr = budget.category ? budget.category.toString() : "";
+                const totalSpent = spentMap.get(categoryIdStr) || 0;
+                return {
+                    category: budget.category,
+                    limit: budget.limit,
+                    spent: totalSpent,
+                    exceeded: totalSpent > budget.limit
+                };
+            });
 
-        const spentData = await Transaction.aggregate([
-            {
-                $match: {
-                    user: req.user._id,
-                    type: "expense",
-                    date: {
-                        $gte: new Date(Date.UTC(year, month - 1, 1)),
-                        $lte: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
-                    },
-                    isDeleted: false
-                }
-            },
-            {
-                $group: {
-                    _id: "$category",
-                    total: { $sum: "$amount" }
-                }
-            }
-        ]);
+            return { results };
+        }, 300);
 
-        const spentMap = new Map();
-        spentData.forEach(item => {
-            if (item._id) {
-                spentMap.set(item._id.toString(), item.total);
-            }
-        });
-
-        const results = budgets.map(budget => {
-            const categoryIdStr = budget.category ? budget.category.toString() : "";
-            const totalSpent = spentMap.get(categoryIdStr) || 0;
-            return {
-                category: budget.category,
-                limit: budget.limit,
-                spent: totalSpent,
-                exceeded: totalSpent > budget.limit
-            };
-        });
-
-        if (redis) {
-            try {
-                await redis.set(cacheKey, results, { ex: 300 });
-            } catch (err) {
-                console.warn("Redis SET error:", err.message);
-            }
-        }
-
-        res.json({success: true, message: "Success", data: results});
+        res.json({success: true, message: "Success", data: data.results});
     } catch (error) {
         res.status(500).json({success: false, message: "Server error"});
     }
@@ -413,10 +387,7 @@ exports.deleteBudget = async (req, res) => {
         if (redis) {
             try {
                 await redis.del(`budgets:${req.user._id}`);
-                const keys = await redis.keys(`checkBudgets:${req.user._id}:*`);
-                if (keys.length > 0) {
-                    await redis.del(...keys);
-                }
+                await markBudgetChanged(req.user._id);
             } catch (err) {
                 console.warn("Redis invalidation error:", err.message);
             }

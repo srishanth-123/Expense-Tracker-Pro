@@ -4,7 +4,7 @@ const Transaction = require("../models/Transaction");
 const Notification = require("../models/notificationModel");
 const redis = require("../config/redis");
 const { sendNotificationToUser } = require("../utils/socket");
-const { markFinancialDataChanged } = require("../utils/cacheHelpers");
+const { markFinancialDataChanged, markBudgetChanged } = require("../utils/cacheHelpers");
 
 /**
  * Budget Service
@@ -48,10 +48,7 @@ async function invalidateBudgetCache(userId) {
     if (!redis) return;
     try {
         await redis.del(`budgets:${userId}`);
-        const keys = await redis.keys(`checkBudgets:${userId}:*`);
-        if (keys.length > 0) {
-            await redis.del(...keys);
-        }
+        await markBudgetChanged(userId);
     } catch (err) {
         console.warn("Budget cache invalidation error:", err.message);
     }

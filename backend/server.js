@@ -1,5 +1,7 @@
-const express = require("express");
 const dotenv = require("dotenv");
+dotenv.config();
+
+const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -9,8 +11,6 @@ const mongoose = require("mongoose");
 const compressionMiddleware = require("./middleware/compression");
 const { generalLimiter } = require("./middleware/rateLimitMiddleware");
 
-dotenv.config();
-
 const logger = require("./utils/logger");
 const validateEnv = require("./config/envValidation");
 const connectDB = require("./config/db");
@@ -18,6 +18,14 @@ const connectDB = require("./config/db");
 validateEnv();
 
 const app = express();
+
+// ─── Request ID Tracing ──────────────────────────────────────────────────────
+const { requestIdMiddleware } = require("./middleware/requestId");
+app.use(requestIdMiddleware);
+
+// ─── API Documentation (Swagger) ──────────────────────────────────────────────
+const setupSwagger = require("./config/swagger");
+setupSwagger(app);
 
 // ─── Production Hardening ─────────────────────────────────────────────────────
 app.set('trust proxy', 1); // Trust first proxy (Nginx, AWS ALB, Render, etc.)
@@ -32,7 +40,9 @@ app.use(compressionMiddleware);
 app.use(cors({
     origin: process.env.NODE_ENV === 'production'
         ? (process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
-        : (process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']),
+        : (process.env.FRONTEND_URL
+            ? [process.env.FRONTEND_URL, 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']
+            : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-idempotency-key']
@@ -73,6 +83,58 @@ app.get("/api/health", (req, res) => {
         message: "Server is healthy",
         data: { status: "ok", db: dbStatus, uptime: process.uptime().toFixed(2) + "s" }
     });
+});
+
+app.get("/api/health/liveness", (req, res) => {
+    res.status(200).json({
+        success: true,
+        status: "UP",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
+app.get("/api/health/readiness", async (req, res) => {
+    const dbStatus = mongoose.connection.readyState === 1;
+    
+    // Check Redis REST client (if configured)
+    let redisRestStatus = true;
+    const redisRest = require("./config/redis");
+    if (redisRest) {
+        try {
+            await redisRest.ping();
+        } catch (_) {
+            redisRestStatus = false;
+        }
+    }
+
+    // Check Redis IORedis TCP connection (if configured)
+    let redisTcpStatus = true;
+    const redisTcp = require("./config/ioredis");
+    if (redisTcp) {
+        if (redisTcp.status !== "ready") {
+            redisTcpStatus = false;
+        }
+    }
+
+    const isReady = dbStatus && redisRestStatus && redisTcpStatus;
+
+    const response = {
+        success: isReady,
+        status: isReady ? "READY" : "NOT_READY",
+        timestamp: new Date().toISOString(),
+        checks: {
+            database: dbStatus ? "UP" : "DOWN",
+            redis_rest: redisRest ? (redisRestStatus ? "UP" : "DOWN") : "NOT_CONFIGURED",
+            redis_tcp: redisTcp ? (redisTcpStatus ? "UP" : "DOWN") : "NOT_CONFIGURED"
+        }
+    };
+
+    if (isReady) {
+        res.status(200).json(response);
+    } else {
+        res.status(503).json(response);
+    }
 });
 
 // ─── API Routes (v1) ─────────────────────────────────────────────────────────

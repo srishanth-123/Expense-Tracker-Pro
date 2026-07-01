@@ -51,6 +51,7 @@ class Heap {
 
     _sinkDown(index) {
         const length = this.data.length;
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             let leftChildIndex = 2 * index + 1;
             let rightChildIndex = 2 * index + 2;

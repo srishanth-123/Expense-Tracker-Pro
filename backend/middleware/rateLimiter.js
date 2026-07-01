@@ -95,6 +95,10 @@ class UpstashRedisStore {
  * available (and useRedis is true), otherwise falls back to the built-in MemoryStore.
  */
 const buildLimiter = ({ windowMs, max, prefix, useRedis = true }) => {
+    if (process.env.DISABLE_RATE_LIMITER === "true" || process.env.NODE_ENV === "test") {
+        return (req, res, next) => next();
+    }
+
     const options = {
         windowMs,
         max,

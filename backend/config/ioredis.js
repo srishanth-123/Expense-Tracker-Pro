@@ -15,7 +15,9 @@ const logger = require("../utils/logger");
 
 let ioRedisConnection = null;
 
-if (process.env.REDIS_IOREDIS_URL) {
+if (process.env.DISABLE_REDIS_CACHE === "true") {
+    logger.info("[IORedis] TCP connection is disabled by environment configuration (DISABLE_REDIS_CACHE=true). BullMQ and Socket adapter will be disabled.");
+} else if (process.env.REDIS_IOREDIS_URL) {
     try {
         ioRedisConnection = new Redis(process.env.REDIS_IOREDIS_URL, {
             maxRetriesPerRequest: null,   // Required by BullMQ
@@ -42,7 +44,7 @@ if (process.env.REDIS_IOREDIS_URL) {
         ioRedisConnection = null;
     }
 } else {
-    console.warn(
+    logger.warn(
         "[IORedis] REDIS_IOREDIS_URL is missing. BullMQ and Socket adapter will be disabled."
     );
 }
