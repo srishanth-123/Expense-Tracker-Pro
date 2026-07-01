@@ -27,7 +27,7 @@ WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 COPY --from=prod-deps /app/node_modules ./node_modules
-COPY . .
+COPY backend/ .
 
 # Create logs directory with correct permissions
 RUN mkdir -p logs && chown -R appuser:appgroup /app
