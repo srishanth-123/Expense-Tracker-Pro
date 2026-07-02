@@ -15,10 +15,12 @@ const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 exports.getBalance = async (req, res) => {
     try {
-        const user = await User.findById(req.user._id);
-        res.json({success: true, message: "Success", data: { walletBalance: user.walletBalance || 0 }});
+        // req.user is already populated by the auth middleware (from Redis cache or DB).
+        // Reading walletBalance directly avoids an extra User.findById() call per request.
+        const walletBalance = req.user.walletBalance ?? 0;
+        res.json({ success: true, message: "Success", data: { walletBalance } });
     } catch (error) {
-        res.status(500).json({success: false, message: "Server error"});
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
 

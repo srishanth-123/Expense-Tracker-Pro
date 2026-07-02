@@ -128,4 +128,29 @@ userSchema.pre("save", function() {
     }
 });
 
+// ─── Post-save hook: bust the 30s auth middleware user cache ──────────────────
+// This fires after any user.save() call so stale walletBalance / plan data
+// doesn't linger in the cache after mutations.
+userSchema.post("save", function(doc) {
+    try {
+        const { invalidateUserCache } = require("../middleware/authMiddleware");
+        invalidateUserCache(doc._id);
+    } catch (_) {}
+});
+
+// Also bust after findOneAndUpdate / findByIdAndUpdate (saga service uses these)
+userSchema.post("findOneAndUpdate", function(doc) {
+    if (doc) {
+        try {
+            const { invalidateUserCache } = require("../middleware/authMiddleware");
+            invalidateUserCache(doc._id);
+        } catch (_) {}
+    }
+});
+
+userSchema.post("updateOne", function() {
+    // updateOne doesn't return the doc, so we can't get the _id here.
+    // For the rare cases that use updateOne directly, the 30s TTL is acceptable.
+});
+
 module.exports = mongoose.model("User", userSchema);

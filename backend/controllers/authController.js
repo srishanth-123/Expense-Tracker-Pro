@@ -552,11 +552,16 @@ exports.getAuditLogs = async (req, res) => {
 // ─── Get Profile ──────────────────────────────────────────────────────────────
 exports.getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.user._id).select("-password -activeSessions -emailVerificationToken -emailVerificationExpires -passwordResetToken -passwordResetExpires");
-        if (!user) {
+        // req.user is already populated by the auth middleware (either from Redis
+        // cache or DB). Re-querying the DB here is redundant and adds ~100ms per call.
+        // We strip sensitive fields that the middleware may have left on the object.
+        const { password, activeSessions, emailVerificationToken, emailVerificationExpires,
+                passwordResetToken, passwordResetExpires, ...safeUser } = req.user;
+
+        if (!safeUser._id) {
             return res.status(404).json({ success: false, message: "User not found" });
         }
-        res.json({ success: true, message: "User retrieved", data: user });
+        res.json({ success: true, message: "User retrieved", data: safeUser });
     } catch (error) {
         logger.error("Get profile error:", error);
         res.status(500).json({ success: false, message: "Server error" });

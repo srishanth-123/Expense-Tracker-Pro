@@ -73,13 +73,15 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   // Debounced listener — coalesces rapid-fire financialDataUpdated events
-  // into a single refreshUser() call (500ms debounce window)
+  // into a single refreshUser() call.
+  // 2000ms window: long enough to absorb burst notifications (e.g. 5 splits
+  // settled at once) while still feeling responsive to the user.
   useEffect(() => {
     const handleFinancialUpdate = () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => {
         refreshUser();
-      }, 500);
+      }, 2000);
     };
     window.addEventListener('financialDataUpdated', handleFinancialUpdate);
     return () => {

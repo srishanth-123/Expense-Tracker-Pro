@@ -23,8 +23,12 @@ const transactionSchema=new mongoose.Schema({
 {timestamps:true}
 
 );
-// Add indexes for performance optimization
-transactionSchema.index({ user: 1, date: -1 });
+// ─── Indexes ──────────────────────────────────────────────────────────────────
+// Compound index covering the most common dashboard query:
+//   { user: userId, isDeleted: false } + sort by date DESC
+// Used by both find() and countDocuments() in getTransactions.
+transactionSchema.index({ user: 1, isDeleted: 1, date: -1 });
+transactionSchema.index({ user: 1, date: -1 });       // keep for backward compat
 transactionSchema.index({ category: 1 });
 transactionSchema.index({ type: 1 });
 transactionSchema.index({ description: 'text' });

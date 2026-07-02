@@ -6,6 +6,8 @@ const Category = require("../models/category");
 const { withRetry } = require("../utils/retry");
 const budgetService = require("./budgetService");
 const logger = require("../utils/logger");
+// Cache invalidation — bust the 30s user cache after any wallet balance mutation
+const { invalidateUserCache } = require("../middleware/authMiddleware");
 
 class SagaService {
     async runSaga(steps) {

@@ -75,6 +75,20 @@ app.use((req, res, next) => {
 // ─── Data Sanitization ────────────────────────────────────────────────────────
 app.use(mongoSanitize()); // Prevent NoSQL Injection
 
+// ─── Cache-Control Headers ────────────────────────────────────────────────────
+// GET  → private, no-cache: browser can cache but must revalidate (enables 304)
+// Mutating methods → no-store: never cache write responses
+app.use((req, res, next) => {
+    if (req.method === 'GET') {
+        // "private" → only the user's browser, not CDNs
+        // "no-cache" → must revalidate, but allows 304 Not Modified responses
+        res.setHeader('Cache-Control', 'private, no-cache');
+    } else {
+        res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+});
+
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
     const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
