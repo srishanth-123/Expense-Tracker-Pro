@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const User = require("../models/user");
 
 // Short-lived user cache — 30 seconds TTL.
@@ -14,6 +15,25 @@ try {
 
 const USER_CACHE_TTL = 30; // seconds
 const getUserCacheKey = (userId) => `user-cache:${userId}`;
+
+/**
+ * Rehydrate a plain object from Redis back into something controllers can use.
+ * JSON.stringify/parse converts MongoDB ObjectId → plain string.
+ * We must convert _id back to ObjectId so queries like
+ * Transaction.find({ user: req.user._id }) work correctly.
+ */
+const rehydrateUser = (parsed) => {
+    if (!parsed) return null;
+    if (parsed._id && typeof parsed._id === "string") {
+        try {
+            parsed._id = new mongoose.Types.ObjectId(parsed._id);
+        } catch (_) {
+            // Invalid ObjectId string — treat as cache miss
+            return null;
+        }
+    }
+    return parsed;
+};
 
 const protect = async(req, res, next) => {
     try {
@@ -39,11 +59,13 @@ const protect = async(req, res, next) => {
                 const cached = await redis.get(getUserCacheKey(userId));
                 if (cached) {
                     const parsed = typeof cached === "string" ? JSON.parse(cached) : cached;
-                    // Rehydrate as a plain object — sufficient for req.user downstream
-                    user = parsed;
+                    // IMPORTANT: rehydrate _id back to ObjectId — JSON serialisation
+                    // converts ObjectId to a plain string, which breaks all DB queries.
+                    user = rehydrateUser(parsed);
                 }
             } catch (_) {
                 // Redis failure is non-fatal — fall through to DB
+                user = null;
             }
         }
 
