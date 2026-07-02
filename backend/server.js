@@ -51,8 +51,8 @@ app.use(cors({
 // Cookie parser (must come before routes)
 app.use(cookieParser());
 
-// ─── Request Logging (Morgan → Winston) ───────────────────────────────────────
-app.use(morgan("combined", {
+// ─── Request Logging (Morgan → Winston with response time) ────────────────────
+app.use(morgan(":method :url :status :res[content-length] - :response-time ms (ID: :req[x-request-id])", {
     stream: { write: (message) => logger.info(message.trim()) }
 }));
 
